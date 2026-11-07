@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Piano Magique</title>
+<meta name="description" content="Joue des morceaux célèbres au piano en tapant n'importe quelle touche. Gratuit, sans pub, sans achat.">
+<meta name="theme-color" content="#121017">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Piano Magique">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Figtree:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app" class="mode-magic">
+  <header class="topbar">
+    <button id="btnLibrary" class="song-btn" type="button" aria-haspopup="dialog">
+      <span class="song-meta">
+        <span id="songTitle" class="song-title">Choisis un morceau</span>
+        <span id="songArtist" class="song-artist">Bibliothèque</span>
+      </span>
+      <span class="chev" aria-hidden="true">▾</span>
+    </button>
+
+    <nav class="modes" role="tablist" aria-label="Mode de jeu">
+      <button type="button" role="tab" data-mode="magic" class="active" title="Chaque tap joue la note suivante du morceau">Magique</button>
+      <button type="button" role="tab" data-mode="learn" title="Joue la bonne touche pour avancer">Apprendre</button>
+      <button type="button" role="tab" data-mode="auto" title="Le morceau se joue tout seul">Écouter</button>
+      <button type="button" role="tab" data-mode="free" title="Piano libre">Libre</button>
+    </nav>
+
+    <div class="tools">
+      <button id="btnSound" class="tool-btn" type="button" aria-haspopup="dialog">
+        <span class="tool-label">Son</span><span id="soundName" class="tool-value">Piano</span>
+      </button>
+      <button id="btnBeat" class="tool-btn" type="button" aria-haspopup="dialog">
+        <span class="tool-label">Beat</span><span id="beatName" class="tool-value">Off</span>
+      </button>
+      <button id="btnSettings" class="icon-btn" type="button" aria-label="Réglages" aria-haspopup="dialog">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.4 7.4 0 0 0-1.7-1L15 3.3h-4l-.4 2.6a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1c.5.4 1.1.7 1.7 1l.4 2.6h4l.4-2.6c.6-.3 1.2-.6 1.7-1l2.5 1 2-3.5L19.4 13ZM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z" transform="translate(-1 0)"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <section id="stage" aria-label="Partition">
+    <canvas id="fall"></canvas>
+    <div id="hint" class="hint">
+      <strong>Tape n'importe où</strong>
+      <span>Chaque tap joue la note suivante. Glisse sur les touches pour aller plus vite.</span>
+    </div>
+    <div class="hud">
+      <div class="progress" aria-hidden="true"><div id="progressBar"></div></div>
+      <span id="counter" class="counter">0 / 0</span>
+    </div>
+    <div class="transport">
+      <button id="btnRestart" class="round-btn" type="button" aria-label="Recommencer">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7Z"/></svg>
+      </button>
+      <button id="btnPlay" class="round-btn play" type="button" aria-label="Lecture">
+        <svg class="i-play" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
+        <svg class="i-pause" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M7 5h4v14H7zm6 0h4v14h-4z"/></svg>
+      </button>
+      <label class="speed" for="speed">
+        <span>Vitesse</span>
+        <input id="speed" type="range" min="0.4" max="1.6" step="0.05" value="1">
+        <output id="speedOut">100 %</output>
+      </label>
+      <button id="btnRec" class="round-btn rec" type="button" aria-label="Enregistrer">
+        <span class="rec-dot" aria-hidden="true"></span>
+      </button>
+    </div>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </section>
+
+  <section id="kbwrap" aria-label="Clavier">
+    <div class="felt" aria-hidden="true"></div>
+    <button id="octDown" class="oct-btn" type="button" aria-label="Octave plus grave">‹</button>
+    <div id="keyboard"></div>
+    <button id="octUp" class="oct-btn" type="button" aria-label="Octave plus aiguë">›</button>
+  </section>
+</div>
+
+<!-- ======================= Panneaux ======================= -->
+<div id="scrim" class="scrim" hidden></div>
+
+<aside id="panelLibrary" class="panel" role="dialog" aria-modal="true" aria-labelledby="libTitle" hidden>
+  <header class="panel-head">
+    <h2 id="libTitle">Morceaux</h2>
+    <button class="close" type="button" data-close aria-label="Fermer">✕</button>
+  </header>
+  <div class="panel-tools">
+    <input id="libSearch" class="search" type="search" placeholder="Rechercher un morceau, un compositeur…" autocomplete="off">
+    <div id="libCats" class="chips" role="tablist"></div>
+  </div>
+  <ul id="libList" class="list"></ul>
+  <footer class="panel-foot">
+    <button id="btnImportMidi" class="btn" type="button">Importer un MIDI</button>
+    <button id="btnNewSong" class="btn" type="button">Écrire un morceau</button>
+    <button id="btnImportJson" class="btn ghost" type="button">Importer (.json)</button>
+    <button id="btnExportJson" class="btn ghost" type="button">Exporter mes morceaux</button>
+    <input id="fileMidi" type="file" accept=".mid,.midi,audio/midi,audio/x-midi" hidden>
+    <input id="fileJson" type="file" accept=".json,application/json" hidden>
+  </footer>
+</aside>
+
+<aside id="panelSound" class="panel" role="dialog" aria-modal="true" aria-labelledby="soundTitle" hidden>
+  <header class="panel-head">
+    <h2 id="soundTitle">Sons</h2>
+    <button class="close" type="button" data-close aria-label="Fermer">✕</button>
+  </header>
+  <div class="panel-tools">
+    <input id="soundSearch" class="search" type="search" placeholder="Rechercher : violon, sax, 808…" autocomplete="off">
+    <div id="soundBanks" class="chips" role="tablist"></div>
+    <p id="soundNote" class="note"></p>
+  </div>
+  <div id="soundList" class="sound-grid"></div>
+</aside>
+
+<aside id="panelBeat" class="panel" role="dialog" aria-modal="true" aria-labelledby="beatTitle" hidden>
+  <header class="panel-head">
+    <h2 id="beatTitle">Beat</h2>
+    <button class="close" type="button" data-close aria-label="Fermer">✕</button>
+  </header>
+  <div class="panel-body">
+    <div id="beatStyles" class="beat-grid"></div>
+    <label class="field" for="beatBpm"><span>Tempo</span>
+      <input id="beatBpm" type="range" min="50" max="180" step="1" value="96"><output id="beatBpmOut">96 BPM</output></label>
+    <label class="field" for="beatVol"><span>Volume du beat</span>
+      <input id="beatVol" type="range" min="0" max="1" step="0.05" value="0.7"></label>
+    <label class="check" for="beatSync"><input id="beatSync" type="checkbox" checked> Caler le tempo sur le morceau</label>
+    <div id="beatSteps" class="steps" aria-hidden="true"></div>
+  </div>
+</aside>
+
+<aside id="panelSettings" class="panel" role="dialog" aria-modal="true" aria-labelledby="setTitle" hidden>
+  <header class="panel-head">
+    <h2 id="setTitle">Réglages</h2>
+    <button class="close" type="button" data-close aria-label="Fermer">✕</button>
+  </header>
+  <div class="panel-body">
+    <label class="field" for="setVolume"><span>Volume</span><input id="setVolume" type="range" min="0" max="1" step="0.01" value="0.8"></label>
+    <label class="field" for="setReverb"><span>Réverbération</span><input id="setReverb" type="range" min="0" max="0.8" step="0.01" value="0.25"></label>
+    <label class="field" for="setKeySize"><span>Taille des touches</span><input id="setKeySize" type="range" min="26" max="70" step="1" value="34"></label>
+    <label class="field" for="setTranspose"><span>Transposer</span><input id="setTranspose" type="range" min="-12" max="12" step="1" value="0"><output id="setTransposeOut">0</output></label>
+    <label class="check" for="setSustain"><input id="setSustain" type="checkbox"> Pédale de sustain</label>
+    <label class="check" for="setLabels"><input id="setLabels" type="checkbox" checked> Noms des notes sur les touches</label>
+    <label class="check" for="setSolfege"><input id="setSolfege" type="checkbox" checked> Do Ré Mi (au lieu de C D E)</label>
+    <label class="check" for="setAnyOctave"><input id="setAnyOctave" type="checkbox" checked> Mode Apprendre : accepter la bonne note à n'importe quelle octave</label>
+    <label class="check" for="setFall"><input id="setFall" type="checkbox" checked> Notes qui tombent</label>
+    <p class="note">Clavier d'ordinateur : rangée A&nbsp;S&nbsp;D&nbsp;F… (ou Q&nbsp;S&nbsp;D&nbsp;F en AZERTY) = touches blanches, rangée du dessus = touches noires. En mode Magique, n'importe quelle touche joue la note suivante. Flèches ← → : changer d'octave.</p>
+    <p class="note">100&nbsp;% gratuit, sans publicité, sans compte. Tes morceaux restent sur ton appareil.</p>
+  </div>
+</aside>
+
+<aside id="panelEditor" class="panel wide" role="dialog" aria-modal="true" aria-labelledby="edTitle" hidden>
+  <header class="panel-head">
+    <h2 id="edTitle">Écrire un morceau</h2>
+    <button class="close" type="button" data-close aria-label="Fermer">✕</button>
+  </header>
+  <form id="edForm" class="panel-body" novalidate>
+    <div class="row2">
+      <label class="field" for="edName"><span>Titre</span><input id="edName" type="text" required placeholder="Mon morceau"></label>
+      <label class="field" for="edArtist"><span>Artiste</span><input id="edArtist" type="text" placeholder="Moi"></label>
+    </div>
+    <div class="row2">
+      <label class="field" for="edBpm"><span>Tempo (noires / min)</span><input id="edBpm" type="number" min="20" max="300" value="100"></label>
+      <label class="field" for="edUnit"><span>Durée « 1 » =</span>
+        <select id="edUnit"><option value="2">une croche</option><option value="4">une double-croche</option><option value="1">une noire</option></select></label>
+    </div>
+    <label class="field" for="edNotes"><span>Notes</span>
+      <textarea id="edNotes" rows="7" spellcheck="false" placeholder="Mi4:1 Ré#4 Mi4 Ré#4 Mi4 Si3 Ré4 Do4 La3:2"></textarea></label>
+    <p class="note">Une note = nom + octave : <code>C4</code> ou <code>Do4</code>, <code>F#5</code> ou <code>Fa#5</code>, <code>Bb3</code> ou <code>Sib3</code>. Accord : <code>C4+E4+G4</code>. Durée : <code>:2</code> (elle reste la même pour les notes suivantes). Silence : <code>-</code>. Astuce : en mode Libre, le bouton ● enregistre ce que tu joues.</p>
+    <p id="edError" class="error" role="alert"></p>
+    <div class="actions">
+      <button id="edPreview" class="btn ghost" type="button">Écouter</button>
+      <button class="btn" type="submit">Enregistrer</button>
+    </div>
+  </form>
+</aside>
+
+<aside id="panelMidi" class="panel wide" role="dialog" aria-modal="true" aria-labelledby="midiTitle" hidden>
+  <header class="panel-head">
+    <h2 id="midiTitle">Importer un fichier MIDI</h2>
+    <button class="close" type="button" data-close aria-label="Fermer">✕</button>
+  </header>
+  <form id="midiForm" class="panel-body" novalidate>
+    <label class="field" for="midiName"><span>Titre</span><input id="midiName" type="text"></label>
+    <label class="field" for="midiMelody"><span>Piste mélodie (celle que tu joues en tapant)</span><select id="midiMelody"></select></label>
+    <fieldset class="field">
+      <legend>Accompagnement (joué automatiquement entre tes taps)</legend>
+      <div id="midiAcc" class="acc-list"></div>
+    </fieldset>
+    <label class="field" for="midiChord"><span>Notes max par tap</span>
+      <select id="midiChord"><option value="1">1 (mélodie seule)</option><option value="2">2</option><option value="3" selected>3</option><option value="0">Toutes</option></select></label>
+    <p class="note">Où trouver des MIDI gratuits : cherche « nom du morceau + midi » (ex. sur bitmidi.com, freemidi.org, musescore.com). Le fichier reste sur ton appareil.</p>
+    <p id="midiError" class="error" role="alert"></p>
+    <div class="actions">
+      <button class="btn" type="submit">Créer le preset</button>
+    </div>
+  </form>
+</aside>
+
+<aside id="panelSave" class="panel" role="dialog" aria-modal="true" aria-labelledby="saveTitle" hidden>
+  <header class="panel-head">
+    <h2 id="saveTitle">Enregistrement terminé</h2>
+    <button class="close" type="button" data-close aria-label="Fermer">✕</button>
+  </header>
+  <form id="saveForm" class="panel-body" novalidate>
+    <p id="saveInfo" class="note"></p>
+    <label class="field" for="saveName"><span>Nom du morceau</span><input id="saveName" type="text" required></label>
+    <div class="actions">
+      <button id="saveDiscard" class="btn ghost" type="button">Supprimer</button>
+      <button class="btn" type="submit">Garder</button>
+    </div>
+  </form>
+</aside>
+
+<aside id="panelConfirm" class="panel" role="dialog" aria-modal="true" aria-labelledby="confTitle" hidden>
+  <header class="panel-head">
+    <h2 id="confTitle">Supprimer ?</h2>
+    <button class="close" type="button" data-close aria-label="Fermer">✕</button>
+  </header>
+  <div class="panel-body">
+    <p id="confText" class="note"></p>
+    <div class="actions">
+      <button class="btn ghost" type="button" data-close>Annuler</button>
+      <button id="confOk" class="btn danger" type="button">Supprimer</button>
+    </div>
+  </div>
+</aside>
+
+<script src="js/songs.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/midi.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
