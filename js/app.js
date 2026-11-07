@@ -19,9 +19,9 @@
   };
 
   const settings = Object.assign({
-    volume: 0.8, reverb: 0.25, keySize: 34, transpose: 0, sustain: false, labels: true,
-    solfege: true, anyOctave: true, fall: true, instrument: "synth:piano", autoInstrument: true,
-    mode: "magic", song: "fur-elise", beat: "off", beatBpm: 96, beatVol: 0.7, beatSync: true, speed: 1,
+    volume: 0.85, keySize: 34, transpose: 0, sustain: false, labels: true,
+    solfege: true, anyOctave: true, fall: true, preset: "goosebumps-bell", tweaks: {}, keyColor: "#f4b740",
+    lessonMode: "magic", song: null, beat: "off", beatBpm: 96, beatVol: 0.7, beatSync: true, speed: 1,
   }, store.get("settings", {}));
   const saveSettings = function () { store.set("settings", settings); };
 
@@ -115,7 +115,7 @@
 
   // ================================================================ état
   const S = {
-    mode: settings.mode,
+    mode: "free",
     song: null,
     cur: 0,        // prochain événement (magique / apprendre)
     played: 0,     // événements joués (pour la progression)
@@ -434,6 +434,8 @@
     }
     if (e.code === "ArrowLeft") { shiftOctave(-1); e.preventDefault(); return; }
     if (e.code === "ArrowRight") { shiftOctave(1); e.preventDefault(); return; }
+    if (e.code === "ArrowUp") { nextPreset(-1); e.preventDefault(); return; }
+    if (e.code === "ArrowDown") { nextPreset(1); e.preventDefault(); return; }
     if (e.code === "Tab" || e.code === "Escape" || /^F\d+$/.test(e.code)) return;
     if (keysDown[e.code]) return;
     let midi = null;
@@ -626,7 +628,7 @@
       });
       Rec.pendingSong = {
         id: "u" + Date.now(), title: "", artist: "Moi", cat: "Mes morceaux", tempo: 480, q: 4,
-        instrument: Engine.instrumentId, text: eventsToText(events), bpm: 120, unit: 4,
+        instrument: settings.preset, text: eventsToText(events), bpm: 120, unit: 4,
       };
       $("#saveInfo").textContent = groups.length + " notes enregistrées. Donne-lui un nom pour le retrouver dans « Mes morceaux ».";
       $("#saveName").value = "Mon enregistrement " + (userSongs.length + 1);
@@ -772,7 +774,7 @@
       magic: ["Tape n'importe où", "Chaque tap joue la note suivante. Glisse sur les touches pour aller plus vite."],
       learn: ["Joue la touche dorée", "La bonne note fait avancer le morceau. L'accompagnement suit tout seul."],
       auto: ["Appuie sur lecture", "Le morceau se joue tout seul. Règle la vitesse et regarde les notes."],
-      free: ["Piano libre", "Joue ce que tu veux. Le bouton rouge enregistre un nouveau morceau."],
+      free: ["Joue !", "Touche le clavier pour essayer le son. Change de son avec ‹ ›, ou ouvre « Leçons » pour apprendre un morceau."],
     }[S.mode];
     h.querySelector("strong").textContent = txt[0];
     h.querySelector("span").textContent = txt[1];
@@ -801,31 +803,44 @@
   }
 
   function setMode(mode) {
-    if (mode === S.mode) return;
+    if (!S.song) mode = "free";
+    if (mode === "free" && S.song) mode = settings.lessonMode || "magic";
     stopAuto();
-    S.mode = mode; settings.mode = mode; saveSettings();
+    S.mode = mode;
+    if (mode !== "free") { settings.lessonMode = mode; saveSettings(); }
     $("#app").className = "mode-" + mode;
     $$(".modes button").forEach(function (b) { const on = b.dataset.mode === mode; b.classList.toggle("active", on); b.setAttribute("aria-selected", on); });
     if (Rec.active && mode !== "free") Rec.stop();
     clearTimers();
     if (S.song && S.finished) restartSong();
+    $("#lessonBar").hidden = !S.song;
+    $("#hud").hidden = !S.song;
     updateHint();
     updateNextHint();
   }
 
-  function loadSong(id, opts) {
-    const song = findSong(id) || window.BUILTIN_SONGS[0];
+  /** Démarre une leçon (morceau) */
+  function loadSong(id) {
+    const song = findSong(id);
+    if (!song) return;
     stopAuto();
     S.song = prepare(song);
     settings.song = song.id; saveSettings();
-    $("#songTitle").textContent = S.song.title;
-    $("#songArtist").textContent = S.song.artist || "—";
+    $("#songTitle").textContent = S.song.title + (S.song.artist ? " · " + S.song.artist : "");
     restartSong();
     S.view = S.song.events[S.cur] ? S.song.events[S.cur].t - S.song.q * 2 : 0;
     fitKeyboardToSong();
-    if (settings.autoInstrument && S.song.instrument && !(opts && opts.keepSound)) selectInstrument(S.song.instrument, true);
-    if (settings.beatSync) refreshBeatUi();
-    updateHint();
+    S.mode = "";
+    setMode(settings.lessonMode || "magic");
+    refreshBeatUi();
+  }
+  function quitLesson() {
+    stopAuto();
+    clearTimers();
+    S.song = null; settings.song = null; saveSettings();
+    setMode("free");
+    updateProgress();
+    refreshBeatUi();
   }
 
   // ---------------------------------------------------------------- panneaux
@@ -914,7 +929,7 @@
       ul.appendChild(li);
     });
   }
-  $("#btnLibrary").addEventListener("click", function () { renderLibrary(); openPanel("panelLibrary"); });
+  $("#btnLessons").addEventListener("click", function () { renderLibrary(); openPanel("panelLibrary"); });
   $("#libSearch").addEventListener("input", renderLibrary);
 
   function saveUserSongs() { store.set("songs", userSongs); }
@@ -956,7 +971,7 @@
     return {
       id: editing ? editing.id : "u" + Date.now(), title: title, artist: $("#edArtist").value.trim(),
       cat: "Mes morceaux", tempo: bpm * unit, q: unit, bpm: bpm, unit: unit,
-      instrument: editing ? editing.instrument : Engine.instrumentId, text: $("#edNotes").value.trim(), events: events,
+      instrument: editing ? editing.instrument : settings.preset, text: $("#edNotes").value.trim(), events: events,
     };
   }
   $("#btnNewSong").addEventListener("click", function () { openEditor(null); });
@@ -1026,7 +1041,7 @@
       const song = {
         id: "u" + Date.now(), title: $("#midiName").value.trim() || midiFileName || "Import MIDI", artist: "Import MIDI",
         cat: "Mes morceaux", tempo: conv.tempo, q: conv.q, events: conv.events,
-        instrument: Engine.instrumentId,
+        instrument: settings.preset,
       };
       const json = JSON.stringify(song);
       if (json.length > 3500000) throw new Error("Morceau trop long pour être gardé sur l'appareil.");
@@ -1083,90 +1098,340 @@
   });
   $("#saveDiscard").addEventListener("click", function () { Rec.pendingSong = null; closePanels(); toast("Enregistrement supprimé"); });
 
-  // ---------------------------------------------------------------- sons
-  let soundBank = (settings.instrument.split(":")[0] === "gm") ? settings.instrument.split(":")[1] : "synth";
-  function selectInstrument(id, quiet) {
-    const label = Engine.instrumentLabel(id);
-    const loaded = Engine.isLoaded(id);
-    if (!loaded && !quiet) toast("Chargement : " + label + "…", 8000);
-    const bar = document.querySelector('.sound[data-id="' + id + '"] .bar');
-    return Engine.setInstrument(id, function (p) { if (bar) bar.style.width = Math.round(p * 100) + "%"; })
+  // ---------------------------------------------------------------- sons (presets)
+  let userPresets = store.get("presets", []);
+  let favPresets = store.get("favPresets", []);
+  const HD_CAT = "Vrais instruments (HD)";
+  const MY_CAT = "Mes sons";
+  const PLAIN_CATS = ["Instruments", "FX DJ", HD_CAT, MY_CAT];
+  let soundCat = "Tous", soundBank = "FluidR3_GM";
+  let current = null;            // preset de base choisi
+  let browseList = null;         // liste filtrée (boutons ‹ ›)
+
+  function gmPresets(bank) {
+    return Engine.GM_NAMES.map(function (n, i) {
+      return {
+        id: "gm:" + bank + ":" + n, name: Engine.GM_FR[i], ref: "Instrument réel · banque " + Engine.BANKS[bank],
+        cat: HD_CAT, inst: Engine.GM_FAMILIES[Math.floor(i / 8)], gm: [bank, n], rev: 0.2,
+      };
+    });
+  }
+  function findPreset(id) {
+    if (!id) return null;
+    if (id.indexOf("gm:") === 0) {
+      const p = id.split(":");
+      if (!Engine.BANKS[p[1]]) return null;
+      return gmPresets(p[1]).find(function (x) { return x.id === id; }) || null;
+    }
+    return window.PRESETS.find(function (x) { return x.id === id; }) ||
+      userPresets.find(function (x) { return x.id === id; }) || null;
+  }
+
+  /** Preset effectif = preset choisi + réglages de l'utilisateur */
+  function effective() {
+    const P = JSON.parse(JSON.stringify(current));
+    const t = settings.tweaks || {};
+    const a = (P.a || [0.005, 0.5, 0.7, 0.3]).slice();
+    if (t.A !== undefined) a[0] = t.A;
+    if (t.D !== undefined) a[1] = t.D;
+    if (t.S !== undefined) a[2] = t.S;
+    if (t.R !== undefined) a[3] = t.R;
+    P.a = a;
+    if (t.bright !== undefined) P.bright = t.bright;
+    if (t.q !== undefined && P.f) P.f.q = t.q;
+    if (t.glide !== undefined) P.glide = t.glide;
+    if (t.mono !== undefined) P.mono = t.mono;
+    if (t.drive !== undefined) P.drive = t.drive;
+    if (t.crush !== undefined) P.crush = t.crush ? Math.round(17 - t.crush) : 0;
+    if (t.cho !== undefined) P.cho = t.cho;
+    if (t.dly !== undefined) P.dly = [(P.dly && P.dly[0]) || 0.3, (P.dly && P.dly[1]) || 0.3, t.dly];
+    if (t.rev !== undefined) P.rev = t.rev;
+    if (t.vol !== undefined) P.vol = (P.vol === undefined ? 0.5 : P.vol) * t.vol;
+    if (t.oct !== undefined) P.oct = (P.oct || 0) + t.oct;
+    return P;
+  }
+
+  function showPreset(p) {
+    $("#presetCat").textContent = p.cat + (p.inst ? " · " + p.inst : "");
+    $("#presetName").textContent = p.name;
+    $("#presetRef").textContent = p.ref ? (PLAIN_CATS.indexOf(p.cat) < 0 ? "Style : " + p.ref : p.ref) : "";
+  }
+
+  function previewPreset(p) {
+    Engine.ensure();
+    const t0 = Engine.now() + 0.05;
+    if (p.kit) {
+      [[60, 0], [66, 0.25], [62, 0.5], [66, 0.75], [60, 1], [60, 1.25], [62, 1.5], [70, 1.75]].forEach(function (x) {
+        Engine.play(x[0], 0.85, t0 + x[1] * 0.55, 0.2);
+      });
+      return;
+    }
+    const low = p.inst === "808" || p.inst === "Basse";
+    const base = low ? 48 : 60;
+    const seq = p.cat === "FX DJ" ? [[base, 0, 0.6]] : [[base, 0, 0.35], [base + 4, 0.22, 0.35], [base + 7, 0.44, 0.35], [base + 12, 0.66, 0.7]];
+    seq.forEach(function (x) { Engine.play(tr(x[0]), 0.8, t0 + x[1], x[2]); });
+  }
+
+  function selectPreset(id, opts) {
+    opts = opts || {};
+    const p = findPreset(id) || window.PRESETS[0];
+    const loaded = Engine.isLoaded(p);
+    if (!loaded) toast("Téléchargement : " + p.name + "…", 15000);
+    const card = document.querySelector('.sound[data-id="' + p.id + '"] .bar');
+    const prev = current, prevTweaks = settings.tweaks;
+    if (!opts.keepTweaks) settings.tweaks = {};
+    current = p;
+    return Engine.setPreset(effective(), function (x) { if (card) card.style.width = Math.round(x * 100) + "%"; })
       .then(function () {
-        settings.instrument = id; saveSettings();
-        $("#soundName").textContent = label.split(" · ")[0];
-        $$(".sound").forEach(function (b) { b.classList.toggle("active", b.dataset.id === id); });
-        if (!loaded && !quiet) toast("♪ " + label);
+        settings.preset = p.id; saveSettings();
+        showPreset(p);
+        $$(".sound").forEach(function (b) { b.classList.toggle("active", b.dataset.id === p.id); });
+        if (!loaded) toast("♪ " + p.name);
+        if (opts.preview) previewPreset(p);
+        if (openId === "panelTweak") renderTweaks();
       })
       .catch(function () {
-        if (bar) bar.style.width = "0";
-        toast("Ce son n'a pas pu être téléchargé. Vérifie ta connexion (les sons « Synthé » marchent hors-ligne).", 5000);
+        current = prev; settings.tweaks = prevTweaks;
+        if (card) card.style.width = "0";
+        toast("Ce son n'a pas pu être téléchargé. Vérifie ta connexion : tous les autres sons marchent hors-ligne.", 5000);
       });
   }
-  function renderSounds() {
-    const banks = [["synth", "Synthés (hors-ligne)"]].concat(Object.keys(Engine.BANKS).map(function (k) { return [k, Engine.BANKS[k]]; }));
-    $("#soundBanks").innerHTML = "";
-    banks.forEach(function (b) {
-      const c = document.createElement("button");
-      c.type = "button"; c.className = "chip" + (b[0] === soundBank ? " active" : "");
-      c.textContent = b[1];
-      c.addEventListener("click", function () { soundBank = b[0]; renderSounds(); });
-      $("#soundBanks").appendChild(c);
-    });
-    $("#soundNote").innerHTML = soundBank === "synth"
-      ? "Sons générés en direct par ton appareil : instantanés et disponibles sans connexion."
-      : "128 instruments réels enregistrés (banque General MIDI libre). Chaque son se télécharge une fois (1 à 4 Mo) puis reste disponible.";
+
+  function nextPreset(d) {
+    const list = browseList && browseList.length ? browseList : window.PRESETS;
+    let i = list.findIndex(function (x) { return current && x.id === current.id; });
+    i = i < 0 ? 0 : (i + d + list.length) % list.length;
+    selectPreset(list[i].id, { preview: true });
+  }
+
+  function filteredPresets() {
     const q = norm($("#soundSearch").value);
-    const grid = $("#soundList"); grid.innerHTML = "";
-    const cur = Engine.instrumentId;
-    function card(id, ico, name) {
+    let src;
+    if (soundCat === HD_CAT) src = gmPresets(soundBank);
+    else if (soundCat === MY_CAT) src = userPresets;
+    else if (soundCat === "Favoris") src = window.PRESETS.concat(userPresets).filter(function (p) { return favPresets.indexOf(p.id) >= 0; });
+    else if (soundCat === "Tous") src = window.PRESETS.concat(userPresets);
+    else src = window.PRESETS.filter(function (p) { return p.cat === soundCat; });
+    if (!q) return src;
+    const words = q.split(/\s+/).filter(Boolean);
+    return src.filter(function (p) {
+      const hay = norm([p.name, p.ref, p.cat, p.inst].join(" "));
+      return words.every(function (w) { return hay.indexOf(w) >= 0; });
+    });
+  }
+
+  function renderSounds() {
+    const cats = ["Tous", "Favoris", MY_CAT].concat(window.PRESET_CATS, [HD_CAT]);
+    const cc = $("#soundCats"); cc.innerHTML = "";
+    cats.forEach(function (c) {
       const b = document.createElement("button");
-      b.type = "button"; b.className = "sound" + (id === cur ? " active" : ""); b.dataset.id = id;
-      b.innerHTML = '<span class="ico" aria-hidden="true"></span><span class="nm"></span><span class="bar"></span>';
-      b.querySelector(".ico").textContent = ico; b.querySelector(".nm").textContent = name;
-      b.addEventListener("click", function () {
-        settings.autoInstrument = false;
-        $("#autoInstr").checked = false;
-        selectInstrument(id).then(function () {
-          Engine.ensure();
-          const v = Engine.noteOn(tr(60), 0.8); setTimeout(function () { Engine.noteOff(v); }, 400);
+      b.type = "button"; b.className = "chip" + (c === soundCat ? " active" : "");
+      b.textContent = c === "Favoris" ? "★ Favoris" : c;
+      b.addEventListener("click", function () { soundCat = c; renderSounds(); });
+      cc.appendChild(b);
+    });
+    const bk = $("#soundBanks");
+    bk.hidden = soundCat !== HD_CAT;
+    bk.innerHTML = "";
+    Object.keys(Engine.BANKS).forEach(function (k) {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "chip" + (k === soundBank ? " active" : "");
+      b.textContent = "Banque " + Engine.BANKS[k];
+      b.addEventListener("click", function () { soundBank = k; renderSounds(); });
+      bk.appendChild(b);
+    });
+    const count = window.PRESETS.length;
+    $("#soundNote").textContent = soundCat === HD_CAT
+      ? "128 vrais instruments enregistrés (banques General MIDI libres). Chaque son se télécharge une fois (1 à 4 Mo), puis reste disponible."
+      : soundCat === MY_CAT ? "Tes sons modifiés. Pour en créer un : choisis un son, ouvre « Son · Réglages » et touche « Enregistrer »."
+        : count + " sons recréés par synthèse, disponibles hors-ligne. Tape un nom d'artiste, de morceau ou d'instrument.";
+
+    const list = filteredPresets();
+    browseList = list;
+    const grid = $("#soundList"); grid.innerHTML = "";
+    let lastFam = null;
+    list.forEach(function (p) {
+      if (soundCat === HD_CAT && p.inst !== lastFam) {
+        const h = document.createElement("h3"); h.textContent = p.inst; grid.appendChild(h); lastFam = p.inst;
+      }
+      const el = document.createElement("div");
+      el.className = "sound" + (current && current.id === p.id ? " active" : "");
+      el.dataset.id = p.id;
+      const pick = document.createElement("button");
+      pick.type = "button"; pick.className = "pick";
+      pick.innerHTML = '<span class="tg"></span><span class="nm"></span><span class="rf"></span>';
+      pick.querySelector(".tg").textContent = soundCat === HD_CAT ? "HD" : (soundCat === "Tous" || soundCat === "Favoris" ? p.cat + " · " : "") + (p.inst || "");
+      pick.querySelector(".nm").textContent = p.name;
+      pick.querySelector(".rf").textContent = soundCat === HD_CAT ? "" : p.ref || "";
+      pick.addEventListener("click", function () { selectPreset(p.id, { preview: true }); });
+      el.appendChild(pick);
+      if (p.cat === MY_CAT) {
+        const del = document.createElement("button");
+        del.type = "button"; del.className = "star"; del.textContent = "🗑"; del.setAttribute("aria-label", "Supprimer " + p.name);
+        del.addEventListener("click", function () { confirmDeletePreset(p); });
+        el.appendChild(del);
+      } else if (!p.gm) {
+        const fav = favPresets.indexOf(p.id) >= 0;
+        const st = document.createElement("button");
+        st.type = "button"; st.className = "star" + (fav ? " on" : ""); st.textContent = fav ? "★" : "☆";
+        st.setAttribute("aria-label", fav ? "Retirer des favoris" : "Ajouter aux favoris");
+        st.addEventListener("click", function () {
+          if (favPresets.indexOf(p.id) >= 0) favPresets = favPresets.filter(function (x) { return x !== p.id; });
+          else favPresets.push(p.id);
+          store.set("favPresets", favPresets); renderSounds();
         });
-      });
-      return b;
-    }
-    if (soundBank === "synth") {
-      Object.keys(Engine.SYNTHS).forEach(function (k) {
-        const s = Engine.SYNTHS[k];
-        if (q && norm(s.name).indexOf(q) < 0) return;
-        grid.appendChild(card("synth:" + k, s.icon, s.name));
-      });
-    } else {
-      Engine.GM_FAMILIES.forEach(function (fam, fi) {
-        const items = [];
-        for (let i = fi * 8; i < fi * 8 + 8; i++) {
-          const nm = Engine.GM_FR[i];
-          if (q && norm(nm + " " + Engine.GM_NAMES[i] + " " + fam).indexOf(q) < 0) continue;
-          items.push(card("gm:" + soundBank + ":" + Engine.GM_NAMES[i], "", nm));
-        }
-        if (!items.length) return;
-        const h = document.createElement("h3"); h.textContent = fam; grid.appendChild(h);
-        items.forEach(function (x) { x.querySelector(".ico").remove(); grid.appendChild(x); });
-      });
-    }
-    if (!grid.children.length) {
-      const p = document.createElement("p"); p.className = "note"; p.textContent = "Aucun son ne correspond.";
+        el.appendChild(st);
+      }
+      const bar = document.createElement("span"); bar.className = "bar"; el.appendChild(bar);
+      grid.appendChild(el);
+    });
+    if (!list.length) {
+      const p = document.createElement("p"); p.className = "note";
+      p.textContent = soundCat === "Favoris" ? "Touche ☆ sur un son pour le retrouver ici." : soundCat === MY_CAT ? "Aucun son perso pour l'instant." : "Aucun son ne correspond.";
       grid.appendChild(p);
     }
   }
-  $("#btnSound").addEventListener("click", function () { renderSounds(); openPanel("panelSound"); });
-  $("#soundSearch").addEventListener("input", renderSounds);
-  // case "son selon le morceau"
-  (function () {
-    const l = document.createElement("label"); l.className = "check"; l.htmlFor = "autoInstr";
-    l.innerHTML = '<input id="autoInstr" type="checkbox"> Changer de son automatiquement selon le morceau';
-    $("#soundNote").after(l);
-    $("#autoInstr").checked = settings.autoInstrument;
-    $("#autoInstr").addEventListener("change", function () { settings.autoInstrument = this.checked; saveSettings(); });
-  })();
+  function confirmDeletePreset(p) {
+    $("#confText").textContent = "Le son « " + p.name + " » sera supprimé de cet appareil.";
+    openPanel("panelConfirm");
+    $("#confOk").onclick = function () {
+      userPresets = userPresets.filter(function (x) { return x.id !== p.id; });
+      store.set("presets", userPresets);
+      if (current && current.id === p.id) selectPreset(window.PRESETS[0].id);
+      soundCat = MY_CAT; renderSounds(); openPanel("panelSound");
+    };
+  }
+  $("#btnPreset").addEventListener("click", function () { renderSounds(); openPanel("panelSound"); });
+  $("#soundSearch").addEventListener("input", function () {
+    if ($("#soundSearch").value && soundCat !== "Tous" && soundCat !== HD_CAT) soundCat = "Tous";
+    renderSounds();
+  });
+  $("#presetPrev").addEventListener("click", function () { nextPreset(-1); });
+  $("#presetNext").addEventListener("click", function () { nextPreset(1); });
+
+  // ---------------------------------------------------------------- réglages du son
+  const secs = function (v) { return v < 1 ? Math.round(v * 1000) + " ms" : v.toFixed(2) + " s"; };
+  const TW = [
+    { k: "A", label: "Attaque", min: 0, max: 2, step: 0.005, get: function (P) { return P.a[0]; }, fmt: secs, synth: true },
+    { k: "D", label: "Déclin", min: 0.02, max: 4, step: 0.01, get: function (P) { return P.a[1]; }, fmt: secs, synth: true },
+    { k: "S", label: "Maintien", min: 0, max: 1, step: 0.01, get: function (P) { return P.a[2]; }, fmt: function (v) { return Math.round(v * 100) + " %"; }, synth: true },
+    { k: "R", label: "Relâchement", min: 0.02, max: 4, step: 0.01, get: function (P) { return P.a[3]; }, fmt: secs, synth: true },
+    { k: "bright", label: "Brillance", min: -2, max: 2, step: 0.1, get: function (P) { return P.bright || 0; }, fmt: function (v) { return (v > 0 ? "+" : "") + v.toFixed(1); }, filter: true },
+    { k: "q", label: "Résonance", min: 0.1, max: 20, step: 0.1, get: function (P) { return P.f ? (P.f.q === undefined ? 0.7 : P.f.q) : 0; }, fmt: function (v) { return v.toFixed(1); }, filter: true },
+    { k: "glide", label: "Glissando", min: 0, max: 0.5, step: 0.005, get: function (P) { return P.glide || 0; }, fmt: secs, synth: true },
+    { k: "oct", label: "Octave", min: -2, max: 2, step: 1, get: function () { return (settings.tweaks || {}).oct || 0; }, fmt: function (v) { return (v > 0 ? "+" : "") + v; }, synth: true },
+    { k: "drive", label: "Saturation", min: 0, max: 1, step: 0.01, get: function (P) { return P.drive || 0; }, fmt: pctf, fx: true },
+    { k: "crush", label: "Lo-fi", min: 0, max: 12, step: 1, get: function (P) { return P.crush ? 17 - P.crush : 0; }, fmt: function (v) { return v ? (17 - v) + " bits" : "off"; }, fx: true },
+    { k: "cho", label: "Chorus", min: 0, max: 1, step: 0.01, get: function (P) { return P.cho || 0; }, fmt: pctf, fx: true },
+    { k: "dly", label: "Écho", min: 0, max: 0.7, step: 0.01, get: function (P) { return P.dly ? P.dly[2] : 0; }, fmt: pctf, fx: true },
+    { k: "rev", label: "Réverb", min: 0, max: 1, step: 0.01, get: function (P) { return P.rev === undefined ? 0.2 : P.rev; }, fmt: pctf, fx: true },
+    { k: "vol", label: "Volume du son", min: 0.2, max: 2, step: 0.05, get: function () { return (settings.tweaks || {}).vol || 1; }, fmt: function (v) { return Math.round(v * 100) + " %"; }, synth: true },
+  ];
+  function pctf(v) { return Math.round(v * 100) + " %"; }
+  let fxTimer = null;
+  function renderTweaks() {
+    if (!current) return;
+    const P = effective();
+    const isSynth = !P.kit && !P.gm;
+    $("#tweakFor").textContent = current.name + (current.ref ? " — " + current.ref : "");
+    const box = $("#tweakSliders"); box.innerHTML = "";
+    TW.forEach(function (d) {
+      if (d.synth && !isSynth) return;
+      if (d.filter && (!isSynth || !P.f)) return;
+      const id = "tw-" + d.k;
+      const lab = document.createElement("label"); lab.className = "field"; lab.htmlFor = id;
+      lab.innerHTML = '<span></span><input type="range"><output></output>';
+      lab.querySelector("span").textContent = d.label;
+      const inp = lab.querySelector("input"), out = lab.querySelector("output");
+      inp.id = id; inp.min = d.min; inp.max = d.max; inp.step = d.step;
+      const v0 = d.get(P); inp.value = v0; out.textContent = d.fmt(+v0);
+      inp.addEventListener("input", function () {
+        settings.tweaks = settings.tweaks || {};
+        settings.tweaks[d.k] = +inp.value;
+        out.textContent = d.fmt(+inp.value);
+        saveSettings();
+        if (d.fx) {
+          clearTimeout(fxTimer);
+          fxTimer = setTimeout(function () { Engine.updatePreset(effective(), true); }, 120);
+        } else {
+          Engine.updatePreset(effective(), false);
+        }
+      });
+      box.appendChild(lab);
+    });
+    $("#twMono").checked = !!P.mono;
+    $("#twMono").closest("label").hidden = !isSynth;
+    $("#twSaveRow").hidden = true;
+  }
+  $("#twMono").addEventListener("change", function () {
+    settings.tweaks = settings.tweaks || {};
+    settings.tweaks.mono = this.checked; saveSettings();
+    Engine.setPreset(effective());
+  });
+  $("#twReset").addEventListener("click", function () {
+    settings.tweaks = {}; saveSettings();
+    Engine.setPreset(effective());
+    renderTweaks(); toast("Son d'origine rétabli");
+  });
+  $("#twSave").addEventListener("click", function () {
+    $("#twSaveRow").hidden = false;
+    $("#twName").value = current.name.replace(/^Mon /, "") + " (perso)";
+    $("#twName").focus();
+  });
+  $("#twSaveOk").addEventListener("click", function () {
+    const P = effective();
+    const name = $("#twName").value.trim() || "Mon son";
+    const np = Object.assign({}, P, { id: "my" + Date.now(), name: name, ref: "Basé sur " + current.name, cat: MY_CAT, inst: current.inst });
+    delete np.oct; np.oct = P.oct;
+    userPresets.push(np);
+    store.set("presets", userPresets);
+    settings.tweaks = {};
+    selectPreset(np.id);
+    closePanels();
+    toast("Ajouté à « Mes sons »");
+  });
+  $("#btnTweak").addEventListener("click", function () { renderTweaks(); openPanel("panelTweak"); });
+
+  // ---------------------------------------------------------------- couleur des touches
+  const KEY_COLORS = ["#f4b740", "#ff5fa2", "#4cc9f0", "#a78bfa", "#5eead4", "#ff7a45", "#ef4444", "#84cc16", "#f1e9d8"];
+  function applyKeyColor(c) {
+    document.documentElement.style.setProperty("--gold", c);
+    COL.gold = c;
+  }
+  function renderKeyColors() {
+    const box = $("#keyColors"); box.innerHTML = "";
+    KEY_COLORS.forEach(function (c) {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "swatch" + (c === settings.keyColor ? " active" : "");
+      b.style.background = c; b.setAttribute("aria-label", "Couleur " + c);
+      b.addEventListener("click", function () { settings.keyColor = c; saveSettings(); applyKeyColor(c); renderKeyColors(); });
+      box.appendChild(b);
+    });
+  }
+
+  // ---------------------------------------------------------------- clavier MIDI
+  const midiHeld = {};
+  function onMidi(e) {
+    const d = e.data, st = d[0] & 0xf0, n = d[1], v = d[2];
+    if (st === 0x90 && v > 0) {
+      if (midiHeld[n]) release(midiHeld[n]);
+      midiHeld[n] = press(n, v / 127);
+    } else if (st === 0x80 || (st === 0x90 && v === 0)) {
+      if (midiHeld[n]) { release(midiHeld[n]); delete midiHeld[n]; }
+    } else if (st === 0xb0 && n === 64) {
+      Engine.setSustain(v >= 64 || settings.sustain);
+    }
+  }
+  function connectMidi() {
+    if (!navigator.requestMIDIAccess) { toast("Ce navigateur ne gère pas les claviers MIDI (essaie Chrome ou Edge).", 4000); return; }
+    navigator.requestMIDIAccess().then(function (acc) {
+      const bind = function () { let n = 0; acc.inputs.forEach(function (inp) { inp.onmidimessage = onMidi; n++; }); return n; };
+      const n = bind();
+      toast(n ? "Clavier MIDI connecté" : "Aucun clavier MIDI détecté. Branche-le puis réessaie.", 3500);
+      acc.onstatechange = function () { bind(); };
+    }).catch(function () { toast("Accès MIDI refusé par le navigateur.", 3500); });
+  }
+  $("#btnMidi").addEventListener("click", connectMidi);
 
   // ---------------------------------------------------------------- beat
   let stepsEl = null;
@@ -1225,7 +1490,6 @@
     el.addEventListener("change", function () { settings[key] = el.checked; saveSettings(); if (fn) fn(el.checked); });
   }
   bindRange("#setVolume", "volume", function (v) { Engine.setVolume(v); });
-  bindRange("#setReverb", "reverb", function (v) { Engine.setReverb(v); });
   bindRange("#setKeySize", "keySize", function () { layoutKeyboard(); fitKeyboardToSong(); });
   bindRange("#setTranspose", "transpose", null, function (v) { return (v > 0 ? "+" : "") + v + " demi-ton" + (Math.abs(v) > 1 ? "s" : ""); });
   bindCheck("#setSustain", "sustain", function (v) { Engine.setSustain(v); });
@@ -1239,6 +1503,7 @@
 
   // ---------------------------------------------------------------- transport
   $$(".modes button").forEach(function (b) { b.addEventListener("click", function () { setMode(b.dataset.mode); }); });
+  $("#btnQuitLesson").addEventListener("click", function () { quitLesson(); toast("Retour au jeu libre"); });
   $("#btnPlay").addEventListener("click", toggleAuto);
   $("#btnRestart").addEventListener("click", function () {
     const wasPlaying = Auto.playing;
@@ -1278,15 +1543,14 @@
 
   // ================================================================ démarrage
   Engine.setVolume(settings.volume);
-  Engine.setReverb(settings.reverb);
   Engine.setSustain(settings.sustain);
-  $("#app").className = "mode-" + S.mode;
-  $$(".modes button").forEach(function (b) { const on = b.dataset.mode === S.mode; b.classList.toggle("active", on); b.setAttribute("aria-selected", on); });
 
   resizeCanvas();
   layoutKeyboard();
-  loadSong(settings.song, { keepSound: true });
-  selectInstrument(settings.instrument, true);
+  applyKeyColor(settings.keyColor);
+  renderKeyColors();
+  selectPreset(settings.preset, { keepTweaks: true });
+  if (settings.song && findSong(settings.song)) loadSong(settings.song); else setMode("free");
   refreshBeatUi();
   updateHint();
 
@@ -1301,5 +1565,5 @@
   }
 
   // accès pour les tests
-  window.PianoApp = { S: S, KB: KB, settings: settings, parseSongText: parseSongText, loadSong: loadSong, setMode: setMode, press: press, release: release };
+  window.PianoApp = { S: S, KB: KB, settings: settings, parseSongText: parseSongText, loadSong: loadSong, quitLesson: quitLesson, setMode: setMode, press: press, release: release, selectPreset: selectPreset, nextPreset: nextPreset, effective: effective };
 })();

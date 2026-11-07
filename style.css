@@ -60,28 +60,40 @@ code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.92em
   border-bottom: 1px solid var(--lacquer-3);
   z-index: 2;
 }
-.song-btn {
+.preset-nav {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  align-items: stretch;
+  gap: 6px;
+  flex: 1 1 280px;
   min-width: 0;
-  flex: 1 1 200px;
+}
+.nav-btn {
+  flex: 0 0 40px;
+  border-radius: var(--radius);
+  border: 1px solid var(--lacquer-3);
+  background: var(--lacquer-2);
+  font-size: 22px;
+  color: var(--ivory-dim);
+}
+.nav-btn:hover { color: var(--ivory); border-color: var(--ivory-dim); }
+.preset-btn {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
   padding: 6px 12px;
   background: var(--lacquer-2);
   border: 1px solid var(--lacquer-3);
   border-radius: var(--radius);
   text-align: left;
 }
-.song-btn:hover { border-color: var(--ivory-dim); }
-.song-meta { display: flex; flex-direction: column; min-width: 0; flex: 1; }
-.song-title {
-  font-family: var(--font-display);
-  font-weight: 700;
-  font-size: 17px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.song-artist { font-size: 12px; color: var(--ivory-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.chev { color: var(--ivory-dim); }
+.preset-btn:hover { border-color: var(--ivory-dim); }
+.preset-cat { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--gold); font-weight: 700; }
+.preset-name, .preset-ref { max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.preset-name { font-family: var(--font-display); font-weight: 700; font-size: 18px; line-height: 1.15; }
+.preset-ref { font-size: 12px; color: var(--ivory-dim); }
 
 .modes {
   display: flex;
@@ -89,20 +101,19 @@ code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.92em
   background: var(--lacquer-2);
   border: 1px solid var(--lacquer-3);
   border-radius: var(--radius);
-  order: 2;
 }
 .modes button {
   border: 0;
   background: transparent;
-  padding: 7px 12px;
+  padding: 6px 11px;
   border-radius: 9px;
   font-weight: 600;
-  font-size: 14px;
+  font-size: 13px;
   color: var(--ivory-dim);
 }
 .modes button.active { background: var(--felt); color: var(--ivory); }
 
-.tools { display: flex; gap: 6px; order: 3; }
+.tools { display: flex; gap: 6px; }
 .tool-btn, .icon-btn {
   display: flex;
   flex-direction: column;
@@ -121,22 +132,20 @@ code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.92em
 .tool-btn.on { border-color: var(--gold); }
 
 @media (max-width: 720px) {
-  .song-btn { flex-basis: 100%; order: 1; }
-  .modes { flex: 1 1 auto; order: 2; }
-  .modes button { flex: 1; padding: 7px 4px; font-size: 13px; }
+  .preset-nav { flex-basis: 100%; }
   .tools { flex: 1 1 100%; }
   .tool-btn { flex: 1; }
   .tool-value { max-width: 100%; }
 }
 @media (max-height: 480px) and (orientation: landscape) {
   .topbar { flex-wrap: nowrap; padding-block: 5px; }
-  .song-btn { flex: 1 1 auto; order: 0; padding-block: 3px; }
-  .song-title { font-size: 15px; }
-  .modes { order: 0; flex: 0 0 auto; }
-  .modes button { padding: 6px 9px; }
-  .tools { order: 0; }
+  .preset-nav { flex: 1 1 auto; }
+  .preset-btn { padding-block: 3px; }
+  .preset-name { font-size: 15px; }
+  .preset-cat { display: none; }
   .tool-btn, .icon-btn { min-height: 38px; }
-  :root { --kb-h: clamp(120px, 42vh, 200px); }
+  .tool-label { display: none; }
+  :root { --kb-h: clamp(120px, 44vh, 200px); }
 }
 
 /* ---------------------------------------------------------- scène */
@@ -213,11 +222,21 @@ code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.92em
 .speed output { font-variant-numeric: tabular-nums; min-width: 40px; color: var(--ivory); }
 
 /* boutons visibles selon le mode */
-#btnPlay, .speed { display: none; }
-.mode-auto #btnPlay, .mode-auto .speed { display: flex; }
-.mode-learn .speed { display: flex; }
-#btnRec { display: none; }
-.mode-free #btnRec { display: grid; }
+.transport > * { display: none !important; }
+.mode-free #btnRec { display: grid !important; }
+.mode-magic #btnRestart, .mode-learn #btnRestart, .mode-auto #btnRestart, .mode-auto #btnPlay { display: grid !important; }
+.mode-auto .speed, .mode-learn .speed { display: flex !important; }
+
+.lesson-bar {
+  position: absolute;
+  top: 8px; left: var(--gutter-l); right: var(--gutter-r);
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  z-index: 2;
+}
+.lesson-meta { display: flex; flex-direction: column; min-width: 0; flex: 1 1 120px; }
+.lesson-title { font-family: var(--font-display); font-weight: 700; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.btn.small { padding: 7px 12px; font-size: 13px; }
+.hud { top: auto; bottom: 64px; }
 
 .toast {
   position: absolute; left: 50%; top: 26px; transform: translate(-50%, -8px);
@@ -312,7 +331,7 @@ code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.92em
   -webkit-user-select: text; user-select: text;
   animation: slide 0.22s ease-out;
 }
-.panel.wide { width: min(620px, 100%); }
+.panel.wide { width: min(680px, 100%); }
 @keyframes slide { from { transform: translateX(24px); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .panel { animation: none; } .round-btn.rec.recording { animation: none; } }
 .panel-head {
@@ -367,7 +386,7 @@ code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.92em
 .list .empty { padding: 24px 12px; color: var(--ivory-dim); text-align: center; display: block; }
 
 .sound-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
   gap: 8px; padding: 0 16px 20px; overflow-y: auto; align-content: start;
 }
 .sound-grid h3 {
@@ -383,7 +402,18 @@ code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.92em
 }
 .sound:hover { border-color: var(--ivory-dim); }
 .sound.active { border-color: var(--gold); box-shadow: inset 0 0 0 1px var(--gold); }
-.sound .ico { font-size: 18px; }
+.sound { flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 12px; }
+.sound .nm { font-weight: 700; font-size: 14px; }
+.sound .rf { font-size: 12px; color: var(--ivory-dim); font-weight: 500; }
+.sound .tg { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--gold); font-weight: 700; }
+.sound .fav { position: absolute; top: 6px; right: 8px; color: var(--gold); font-size: 13px; }
+.tweaks { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+@media (max-width: 420px) { .tweaks { grid-template-columns: 1fr; } }
+.save-row { display: flex; gap: 8px; align-items: flex-end; }
+.save-row .field { flex: 1; }
+.swatches { display: flex; gap: 10px; flex-wrap: wrap; }
+.swatch { width: 36px; height: 36px; border-radius: 50%; border: 2px solid var(--lacquer-3); }
+.swatch.active { border-color: var(--ivory); box-shadow: 0 0 0 2px var(--lacquer-2) inset; }
 .sound .bar { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--gold); width: 0; }
 
 .beat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; }
@@ -424,3 +454,18 @@ input[type="range"] { accent-color: var(--gold); width: 100%; }
 .btn.ghost { background: transparent; color: var(--ivory); border-color: var(--lacquer-3); }
 .btn.danger { background: var(--danger); border-color: var(--danger); color: var(--lacquer); }
 .btn:hover { filter: brightness(1.08); }
+
+/* cartes de sons (div contenant un bouton principal + favori) */
+.sound { padding: 0; display: block; }
+.sound .pick {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  width: 100%; min-height: 64px; padding: 10px 34px 10px 12px;
+  border: 0; background: transparent; text-align: left; border-radius: 10px;
+}
+.sound .rf { font-size: 12px; color: var(--ivory-dim); font-weight: 500; }
+.sound .star {
+  position: absolute; top: 4px; right: 4px; width: 30px; height: 30px;
+  border: 0; background: transparent; border-radius: 50%; color: var(--ivory-dim); font-size: 15px;
+}
+.sound .star.on { color: var(--gold); }
+.sound .star:hover { background: var(--lacquer-3); }

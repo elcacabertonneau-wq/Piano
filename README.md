@@ -1,41 +1,35 @@
 # Piano Magique 🎹
 
-Joue des morceaux célèbres au piano **en tapant n'importe quelle touche** : chaque tap joue la note suivante
-du morceau, tu as l'impression de le jouer pour de vrai. **100 % gratuit, sans pub, sans compte, sans achat intégré.**
+Un piano tactile avec **plus de 130 sons inspirés de tubes** : la cowbell de « Tiki Tiki », la cloche de
+« Goosebumps », la flûte de « Mask Off », la 808 glissante de « Dior », le sifflet G-Funk de Dr. Dre,
+le synthé de « Blinding Lights », le lead de « Levels »… Choisis un son et joue-le sur le clavier.
+**100 % gratuit : pas de pub, pas de compte, pas d'achat intégré.**
 
-C'est une application web (PWA) : elle s'installe sur iPhone, Android, Mac ou PC depuis le navigateur
-et fonctionne ensuite hors-ligne.
+C'est une application web (PWA). Elle s'installe sur iPhone, Android, Mac ou PC depuis le navigateur
+et marche ensuite sans connexion.
 
 ## Ce qu'il y a dedans
 
-- **4 modes**
-  - **Magique** : tape n'importe où (ou glisse sur les touches) → le morceau avance note par note.
-  - **Apprendre** : la touche à jouer s'allume en or, l'accompagnement suit tout seul.
-  - **Écouter** : le morceau se joue tout seul, vitesse réglable (40 % à 160 %).
-  - **Libre** : piano normal + bouton ● pour **enregistrer** tes propres morceaux.
-- **30 morceaux intégrés** (domaine public) : Lettre à Élise, Hymne à la joie, Canon de Pachelbel,
-  Marche turque, Gymnopédie, Toccata de Bach, Clair de lune, Prélude en Do, Petite musique de nuit,
-  Roi de la montagne, Guillaume Tell, French Cancan, Beau Danube bleu, Printemps de Vivaldi, Berceuse de Brahms,
-  Joyeux anniversaire, Vive le vent, Douce nuit, Korobeïniki, Greensleeves, La Cucaracha…
-- **Plus de 400 sons**
-  - 18 synthés intégrés, instantanés et hors-ligne : piano, piano électrique, orgue, cordes, pad, supersaw EDM,
-    lead, 8-bit, cloches, boîte à musique, marimba, guitare, clavecin, cuivres, flûte, chœur, basse 808, steel drum.
-  - 3 banques de 128 instruments réels General MIDI (Fluid, Musyng, FatBoy) : violon, sax, guitares, basses,
-    trompette, harpe, kalimba, sitar… téléchargés une fois puis gardés en cache.
-- **Beat** : 10 rythmes (Pop, Hip-hop, Trap, House, Reggaeton, Rock, Afro, Funk, Valse, Métronome),
-  calés automatiquement sur le tempo du morceau.
-- **Ajoute n'importe quel morceau**
-  - **Import MIDI** : choisis un fichier `.mid` (il en existe des milliers gratuits : bitmidi.com, freemidi.org,
-    musescore.com…). Tu choisis la piste « mélodie » que tu joues en tapant ; les autres pistes deviennent
-    l'accompagnement joué automatiquement entre tes taps.
-  - **Éditeur de notes** : écris `Do4:2 Ré4 Mi4 Do4+Mi4+Sol4:4` (ou `C4 D4 E4`).
-  - **Enregistrement** en mode Libre.
-  - Export / import de tes morceaux en `.json` pour les partager.
-- Notes qui tombent sur le clavier, Do Ré Mi ou C D E, transposition, sustain, réverbération,
-  taille des touches, clavier d'ordinateur (A S D F… / Q S D F… en AZERTY).
+- **133 sons recréés par synthèse**, rangés par style :
+  Phonk, Trap, Drill, Rap FR, Hip-hop US, Pop & R&B, EDM, Années 80, Afro & Latino, Films & jeux, Lo-fi, FX DJ, Instruments.
+  - Recherche par **artiste, morceau ou instrument** (« travis », « 808 », « cowbell », « flûte »…).
+  - Boutons ‹ › pour passer d'un son à l'autre, avec un aperçu joué automatiquement.
+  - Favoris ★.
+- **8 kits de batterie** jouables sur le clavier : trap 808, drill, phonk (cowbells), boom bap, house 909,
+  amapiano (log drums), reggaeton, jersey club.
+- **384 vrais instruments en bonus** : 3 banques General MIDI libres de 128 instruments (violon, sax, guitares, harpe…),
+  téléchargés à la demande puis gardés en cache.
+- **Réglages de chaque son** : attaque, déclin, maintien, relâchement (ADSR), brillance, résonance, glissando,
+  mono, octave, saturation, lo-fi, chorus, écho, réverbération. Enregistre ton réglage dans « Mes sons ».
+- **Beat** : 10 rythmes (Trap, Hip-hop, House, Reggaeton, Afro, Funk…).
+- **Clavier MIDI** USB ou Bluetooth (Chrome, Edge, Android), clavier d'ordinateur, multi-touch et glissando au doigt.
+- **9 couleurs** pour les touches allumées.
+- **Enregistrement** : le bouton ● enregistre ce que tu joues.
+- **Leçons** (en plus) : 30 morceaux du domaine public et import de fichiers MIDI. Les notes tombent sur le clavier,
+  et en mode Magique chaque tap joue la note suivante.
 
-> Les morceaux intégrés sont tous dans le domaine public. Les tubes récents sont protégés par le droit d'auteur,
-> donc ils ne sont pas inclus : importe leur fichier MIDI depuis ton téléphone, il reste sur ton appareil.
+> Les sons sont **recréés de zéro par synthèse**, sans aucun extrait des morceaux. Les noms d'artistes et de
+> titres servent seulement à décrire le style de chaque son.
 
 ## L'installer gratuitement sur ton téléphone
 
@@ -63,10 +57,11 @@ puis ouvre http://localhost:8000.
 ```
 index.html            interface
 style.css             styles
-js/songs.js           morceaux intégrés
-js/audio.js           moteur audio (synthés, banques HD, batterie)
+js/presets.js         les 133 sons (paramètres de synthèse) et les kits
+js/songs.js           morceaux des leçons
+js/audio.js           moteur de synthèse, effets, batterie, banques HD
 js/midi.js            lecture des fichiers MIDI
-js/app.js             modes, clavier, notes qui tombent, beat, éditeur…
+js/app.js             interface : sons, réglages, clavier, leçons, beat, MIDI…
 sw.js                 hors-ligne
 manifest.webmanifest  installation sur l'écran d'accueil
 ```

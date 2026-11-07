@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Piano Magique</title>
-<meta name="description" content="Joue des morceaux célèbres au piano en tapant n'importe quelle touche. Gratuit, sans pub, sans achat.">
+<meta name="description" content="Plus de 100 sons inspirés de tubes à jouer sur un piano tactile. Gratuit, sans pub, sans achat.">
 <meta name="theme-color" content="#121017">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -19,29 +19,26 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div id="app" class="mode-magic">
+<div id="app" class="mode-free">
   <header class="topbar">
-    <button id="btnLibrary" class="song-btn" type="button" aria-haspopup="dialog">
-      <span class="song-meta">
-        <span id="songTitle" class="song-title">Choisis un morceau</span>
-        <span id="songArtist" class="song-artist">Bibliothèque</span>
-      </span>
-      <span class="chev" aria-hidden="true">▾</span>
-    </button>
-
-    <nav class="modes" role="tablist" aria-label="Mode de jeu">
-      <button type="button" role="tab" data-mode="magic" class="active" title="Chaque tap joue la note suivante du morceau">Magique</button>
-      <button type="button" role="tab" data-mode="learn" title="Joue la bonne touche pour avancer">Apprendre</button>
-      <button type="button" role="tab" data-mode="auto" title="Le morceau se joue tout seul">Écouter</button>
-      <button type="button" role="tab" data-mode="free" title="Piano libre">Libre</button>
-    </nav>
-
+    <div class="preset-nav">
+      <button id="presetPrev" class="nav-btn" type="button" aria-label="Son précédent">‹</button>
+      <button id="btnPreset" class="preset-btn" type="button" aria-haspopup="dialog">
+        <span id="presetCat" class="preset-cat">Sons</span>
+        <span id="presetName" class="preset-name">Choisis un son</span>
+        <span id="presetRef" class="preset-ref">Bibliothèque de sons</span>
+      </button>
+      <button id="presetNext" class="nav-btn" type="button" aria-label="Son suivant">›</button>
+    </div>
     <div class="tools">
-      <button id="btnSound" class="tool-btn" type="button" aria-haspopup="dialog">
-        <span class="tool-label">Son</span><span id="soundName" class="tool-value">Piano</span>
+      <button id="btnTweak" class="tool-btn" type="button" aria-haspopup="dialog">
+        <span class="tool-label">Son</span><span class="tool-value">Réglages</span>
       </button>
       <button id="btnBeat" class="tool-btn" type="button" aria-haspopup="dialog">
         <span class="tool-label">Beat</span><span id="beatName" class="tool-value">Off</span>
+      </button>
+      <button id="btnLessons" class="tool-btn" type="button" aria-haspopup="dialog">
+        <span class="tool-label">Leçons</span><span class="tool-value">Morceaux</span>
       </button>
       <button id="btnSettings" class="icon-btn" type="button" aria-label="Réglages" aria-haspopup="dialog">
         <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.4 7.4 0 0 0-1.7-1L15 3.3h-4l-.4 2.6a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1c.5.4 1.1.7 1.7 1l.4 2.6h4l.4-2.6c.6-.3 1.2-.6 1.7-1l2.5 1 2-3.5L19.4 13ZM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z" transform="translate(-1 0)"/></svg>
@@ -49,15 +46,27 @@
     </div>
   </header>
 
-  <section id="stage" aria-label="Partition">
+  <section id="stage" aria-label="Scène">
     <canvas id="fall"></canvas>
-    <div id="hint" class="hint">
-      <strong>Tape n'importe où</strong>
-      <span>Chaque tap joue la note suivante. Glisse sur les touches pour aller plus vite.</span>
+    <div id="lessonBar" class="lesson-bar" hidden>
+      <div class="lesson-meta">
+        <span class="tool-label">Leçon</span>
+        <span id="songTitle" class="lesson-title"></span>
+      </div>
+      <nav class="modes" role="tablist" aria-label="Mode de leçon">
+        <button type="button" role="tab" data-mode="magic" class="active" title="Chaque tap joue la note suivante">Magique</button>
+        <button type="button" role="tab" data-mode="learn" title="Joue la touche dorée pour avancer">Apprendre</button>
+        <button type="button" role="tab" data-mode="auto" title="Le morceau se joue tout seul">Écouter</button>
+      </nav>
+      <button id="btnQuitLesson" class="btn ghost small" type="button">Quitter</button>
     </div>
-    <div class="hud">
+    <div id="hint" class="hint">
+      <strong>Joue !</strong>
+      <span></span>
+    </div>
+    <div class="hud" id="hud" hidden>
       <div class="progress" aria-hidden="true"><div id="progressBar"></div></div>
-      <span id="counter" class="counter">0 / 0</span>
+      <span id="counter" class="counter"></span>
     </div>
     <div class="transport">
       <button id="btnRestart" class="round-btn" type="button" aria-label="Recommencer">
@@ -90,13 +99,48 @@
 <!-- ======================= Panneaux ======================= -->
 <div id="scrim" class="scrim" hidden></div>
 
-<aside id="panelLibrary" class="panel" role="dialog" aria-modal="true" aria-labelledby="libTitle" hidden>
+<aside id="panelSound" class="panel wide" role="dialog" aria-modal="true" aria-labelledby="soundTitle" hidden>
   <header class="panel-head">
-    <h2 id="libTitle">Morceaux</h2>
+    <h2 id="soundTitle">Sons</h2>
     <button class="close" type="button" data-close aria-label="Fermer">✕</button>
   </header>
   <div class="panel-tools">
-    <input id="libSearch" class="search" type="search" placeholder="Rechercher un morceau, un compositeur…" autocomplete="off">
+    <input id="soundSearch" class="search" type="search" placeholder="Artiste, morceau ou instrument : Travis, phonk, 808, flûte…" autocomplete="off">
+    <div id="soundCats" class="chips" role="tablist"></div>
+    <div id="soundBanks" class="chips" role="tablist" hidden></div>
+    <p id="soundNote" class="note"></p>
+  </div>
+  <div id="soundList" class="sound-grid"></div>
+</aside>
+
+<aside id="panelTweak" class="panel" role="dialog" aria-modal="true" aria-labelledby="tweakTitle" hidden>
+  <header class="panel-head">
+    <h2 id="tweakTitle">Réglages du son</h2>
+    <button class="close" type="button" data-close aria-label="Fermer">✕</button>
+  </header>
+  <div class="panel-body">
+    <p id="tweakFor" class="note"></p>
+    <div id="tweakSliders" class="tweaks"></div>
+    <label class="check" for="twMono"><input id="twMono" type="checkbox"> Mono avec glissando (808, leads)</label>
+    <div class="actions">
+      <button id="twReset" class="btn ghost" type="button">Réinitialiser</button>
+      <button id="twSave" class="btn" type="button">Enregistrer dans « Mes sons »</button>
+    </div>
+    <div id="twSaveRow" class="save-row" hidden>
+      <label class="field" for="twName"><span>Nom de ton son</span><input id="twName" type="text"></label>
+      <button id="twSaveOk" class="btn" type="button">Garder</button>
+    </div>
+  </div>
+</aside>
+
+<aside id="panelLibrary" class="panel" role="dialog" aria-modal="true" aria-labelledby="libTitle" hidden>
+  <header class="panel-head">
+    <h2 id="libTitle">Leçons</h2>
+    <button class="close" type="button" data-close aria-label="Fermer">✕</button>
+  </header>
+  <div class="panel-tools">
+    <p class="note">Apprends un morceau avec le son de ton choix : les notes tombent sur le clavier. En mode Magique, chaque tap joue la note suivante.</p>
+    <input id="libSearch" class="search" type="search" placeholder="Rechercher un morceau…" autocomplete="off">
     <div id="libCats" class="chips" role="tablist"></div>
   </div>
   <ul id="libList" class="list"></ul>
@@ -104,23 +148,10 @@
     <button id="btnImportMidi" class="btn" type="button">Importer un MIDI</button>
     <button id="btnNewSong" class="btn" type="button">Écrire un morceau</button>
     <button id="btnImportJson" class="btn ghost" type="button">Importer (.json)</button>
-    <button id="btnExportJson" class="btn ghost" type="button">Exporter mes morceaux</button>
+    <button id="btnExportJson" class="btn ghost" type="button">Exporter</button>
     <input id="fileMidi" type="file" accept=".mid,.midi,audio/midi,audio/x-midi" hidden>
     <input id="fileJson" type="file" accept=".json,application/json" hidden>
   </footer>
-</aside>
-
-<aside id="panelSound" class="panel" role="dialog" aria-modal="true" aria-labelledby="soundTitle" hidden>
-  <header class="panel-head">
-    <h2 id="soundTitle">Sons</h2>
-    <button class="close" type="button" data-close aria-label="Fermer">✕</button>
-  </header>
-  <div class="panel-tools">
-    <input id="soundSearch" class="search" type="search" placeholder="Rechercher : violon, sax, 808…" autocomplete="off">
-    <div id="soundBanks" class="chips" role="tablist"></div>
-    <p id="soundNote" class="note"></p>
-  </div>
-  <div id="soundList" class="sound-grid"></div>
 </aside>
 
 <aside id="panelBeat" class="panel" role="dialog" aria-modal="true" aria-labelledby="beatTitle" hidden>
@@ -134,7 +165,7 @@
       <input id="beatBpm" type="range" min="50" max="180" step="1" value="96"><output id="beatBpmOut">96 BPM</output></label>
     <label class="field" for="beatVol"><span>Volume du beat</span>
       <input id="beatVol" type="range" min="0" max="1" step="0.05" value="0.7"></label>
-    <label class="check" for="beatSync"><input id="beatSync" type="checkbox" checked> Caler le tempo sur le morceau</label>
+    <label class="check" for="beatSync"><input id="beatSync" type="checkbox" checked> Pendant une leçon, caler le tempo sur le morceau</label>
     <div id="beatSteps" class="steps" aria-hidden="true"></div>
   </div>
 </aside>
@@ -145,17 +176,21 @@
     <button class="close" type="button" data-close aria-label="Fermer">✕</button>
   </header>
   <div class="panel-body">
-    <label class="field" for="setVolume"><span>Volume</span><input id="setVolume" type="range" min="0" max="1" step="0.01" value="0.8"></label>
-    <label class="field" for="setReverb"><span>Réverbération</span><input id="setReverb" type="range" min="0" max="0.8" step="0.01" value="0.25"></label>
+    <label class="field" for="setVolume"><span>Volume général</span><input id="setVolume" type="range" min="0" max="1" step="0.01" value="0.85"></label>
     <label class="field" for="setKeySize"><span>Taille des touches</span><input id="setKeySize" type="range" min="26" max="70" step="1" value="34"></label>
     <label class="field" for="setTranspose"><span>Transposer</span><input id="setTranspose" type="range" min="-12" max="12" step="1" value="0"><output id="setTransposeOut">0</output></label>
+    <fieldset class="field">
+      <legend>Couleur des touches allumées</legend>
+      <div id="keyColors" class="swatches"></div>
+    </fieldset>
     <label class="check" for="setSustain"><input id="setSustain" type="checkbox"> Pédale de sustain</label>
     <label class="check" for="setLabels"><input id="setLabels" type="checkbox" checked> Noms des notes sur les touches</label>
     <label class="check" for="setSolfege"><input id="setSolfege" type="checkbox" checked> Do Ré Mi (au lieu de C D E)</label>
-    <label class="check" for="setAnyOctave"><input id="setAnyOctave" type="checkbox" checked> Mode Apprendre : accepter la bonne note à n'importe quelle octave</label>
-    <label class="check" for="setFall"><input id="setFall" type="checkbox" checked> Notes qui tombent</label>
-    <p class="note">Clavier d'ordinateur : rangée A&nbsp;S&nbsp;D&nbsp;F… (ou Q&nbsp;S&nbsp;D&nbsp;F en AZERTY) = touches blanches, rangée du dessus = touches noires. En mode Magique, n'importe quelle touche joue la note suivante. Flèches ← → : changer d'octave.</p>
-    <p class="note">100&nbsp;% gratuit, sans publicité, sans compte. Tes morceaux restent sur ton appareil.</p>
+    <label class="check" for="setAnyOctave"><input id="setAnyOctave" type="checkbox" checked> Leçons : accepter la bonne note à n'importe quelle octave</label>
+    <label class="check" for="setFall"><input id="setFall" type="checkbox" checked> Notes animées au-dessus du clavier</label>
+    <button id="btnMidi" class="btn ghost" type="button">Connecter un clavier MIDI</button>
+    <p class="note">Clavier MIDI : branche-le (ou connecte-le en Bluetooth) puis touche une note, puis touche « Connecter un clavier MIDI » (Chrome, Edge, Android). Clavier d'ordinateur : rangée A&nbsp;S&nbsp;D&nbsp;F… (Q&nbsp;S&nbsp;D&nbsp;F en AZERTY) = touches blanches, rangée du dessus = touches noires, flèches ← → = octave, ↑ ↓ = son suivant.</p>
+    <p class="note">100&nbsp;% gratuit, sans publicité, sans compte. Les sons sont recréés par synthèse et s'inspirent des morceaux cités ; tes sons et morceaux restent sur ton appareil.</p>
   </div>
 </aside>
 
@@ -176,7 +211,7 @@
     </div>
     <label class="field" for="edNotes"><span>Notes</span>
       <textarea id="edNotes" rows="7" spellcheck="false" placeholder="Mi4:1 Ré#4 Mi4 Ré#4 Mi4 Si3 Ré4 Do4 La3:2"></textarea></label>
-    <p class="note">Une note = nom + octave : <code>C4</code> ou <code>Do4</code>, <code>F#5</code> ou <code>Fa#5</code>, <code>Bb3</code> ou <code>Sib3</code>. Accord : <code>C4+E4+G4</code>. Durée : <code>:2</code> (elle reste la même pour les notes suivantes). Silence : <code>-</code>. Astuce : en mode Libre, le bouton ● enregistre ce que tu joues.</p>
+    <p class="note">Une note = nom + octave : <code>C4</code> ou <code>Do4</code>, <code>F#5</code> ou <code>Fa#5</code>, <code>Bb3</code> ou <code>Sib3</code>. Accord : <code>C4+E4+G4</code>. Durée : <code>:2</code> (elle reste la même pour les notes suivantes). Silence : <code>-</code>. Astuce : le bouton ● enregistre ce que tu joues.</p>
     <p id="edError" class="error" role="alert"></p>
     <div class="actions">
       <button id="edPreview" class="btn ghost" type="button">Écouter</button>
@@ -199,10 +234,10 @@
     </fieldset>
     <label class="field" for="midiChord"><span>Notes max par tap</span>
       <select id="midiChord"><option value="1">1 (mélodie seule)</option><option value="2">2</option><option value="3" selected>3</option><option value="0">Toutes</option></select></label>
-    <p class="note">Où trouver des MIDI gratuits : cherche « nom du morceau + midi » (ex. sur bitmidi.com, freemidi.org, musescore.com). Le fichier reste sur ton appareil.</p>
+    <p class="note">Le fichier reste sur ton appareil.</p>
     <p id="midiError" class="error" role="alert"></p>
     <div class="actions">
-      <button class="btn" type="submit">Créer le preset</button>
+      <button class="btn" type="submit">Créer la leçon</button>
     </div>
   </form>
 </aside>
@@ -236,6 +271,7 @@
   </div>
 </aside>
 
+<script src="js/presets.js"></script>
 <script src="js/songs.js"></script>
 <script src="js/audio.js"></script>
 <script src="js/midi.js"></script>

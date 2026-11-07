@@ -1,8 +1,8 @@
 /* Service worker : l'appli marche hors-ligne, et les sons HD déjà téléchargés restent en cache. */
-const VERSION = "pm-v1";
+const VERSION = "pm-v2";
 const SHELL = [
   "./", "index.html", "style.css", "manifest.webmanifest",
-  "js/songs.js", "js/audio.js", "js/midi.js", "js/app.js",
+  "js/presets.js", "js/songs.js", "js/audio.js", "js/midi.js", "js/app.js",
   "icons/icon.svg", "icons/icon-180.png", "icons/icon-192.png", "icons/icon-512.png",
 ];
 

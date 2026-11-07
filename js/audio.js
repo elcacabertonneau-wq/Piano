@@ -1,44 +1,54 @@
 /*
- * Moteur audio : synthés intégrés (fonctionnent hors-ligne), banques de sons
- * échantillonnés General MIDI (gratuites, chargées à la demande) et boîte à rythmes.
+ * Moteur audio de Piano Magique.
+ *  - Synthé modulaire piloté par des presets (oscillateurs, unisson, FM, filtre, enveloppes,
+ *    glissando mono, vibrato, saturation, chorus, écho, réverbération)
+ *  - Kits de batterie synthétisés
+ *  - Banques d'instruments réels General MIDI (optionnelles, téléchargées à la demande)
+ * Tout est généré en direct : aucun fichier audio n'est nécessaire.
  */
 (function () {
   "use strict";
 
   let ctx = null;
-  let master, comp, dryBus, wetBus, convolver, out;
-  let volume = 0.8, reverbAmount = 0.25, sustain = false;
-  let current = { id: "synth:piano", kind: "synth", def: null, sampler: null };
+  let master, comp, dryBus, revSend, convolver, limiter;
+  let volume = 0.85;
+  let sustain = false;
   const voices = new Set();
-  const MAX_VOICES = 64;
+  const MAX_VOICES = 48;
+
+  let preset = null;         // preset effectif (preset + réglages)
+  let fx = null;             // chaîne d'effets du preset courant
+  let sampler = null;        // banque GM si preset "gm"
+  let mono = { voice: null, stack: [] };
 
   const mtof = function (m) { return 440 * Math.pow(2, (m - 69) / 12); };
+  const clampF = function (f) { return Math.max(20, Math.min(19000, f)); };
 
-  // ---------------------------------------------------------------- contexte
+  // ================================================================ contexte
   function ensure() {
     if (!ctx) {
       const AC = window.AudioContext || window.webkitAudioContext;
       ctx = new AC({ latencyHint: "interactive" });
-      master = ctx.createGain();
-      master.gain.value = volume;
+      master = ctx.createGain(); master.gain.value = volume;
       comp = ctx.createDynamicsCompressor();
-      comp.threshold.value = -14; comp.knee.value = 20; comp.ratio.value = 4;
-      comp.attack.value = 0.003; comp.release.value = 0.2;
+      comp.threshold.value = -10; comp.knee.value = 12; comp.ratio.value = 6;
+      comp.attack.value = 0.002; comp.release.value = 0.15;
+      limiter = ctx.createWaveShaper();
+      limiter.curve = softClipCurve(0.9);
       dryBus = ctx.createGain();
-      wetBus = ctx.createGain();
-      wetBus.gain.value = reverbAmount;
+      revSend = ctx.createGain(); revSend.gain.value = 1;
       convolver = ctx.createConvolver();
-      convolver.buffer = makeImpulse(2.6, 2.2);
-      out = ctx.createGain(); // entrée commune des voix
-      out.connect(dryBus); out.connect(wetBus);
-      dryBus.connect(master);
-      wetBus.connect(convolver); convolver.connect(master);
-      master.connect(comp); comp.connect(ctx.destination);
-      // iOS : bascule la session audio en "lecture" (ignore le bouton silencieux)
+      convolver.buffer = makeImpulse(2.8, 2.4);
+      const trim = gain(0.42); // marge : évite la saturation quand on joue des accords
+      dryBus.connect(trim);
+      revSend.connect(convolver); convolver.connect(trim);
+      trim.connect(master);
+      master.connect(comp); comp.connect(limiter); limiter.connect(ctx.destination);
       try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (e) { /* rien */ }
       unlockIOS();
+      if (preset) buildFx();
     }
-    if (ctx.state !== "running") { ctx.resume().catch(function () {}); }
+    if (ctx.state !== "running") ctx.resume().catch(function () {});
     return ctx;
   }
 
@@ -47,10 +57,26 @@
       const a = document.createElement("audio");
       a.setAttribute("playsinline", "");
       a.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAABErAAABAAgAZGF0YQAAAAA=";
-      a.loop = true;
-      a.volume = 0.01;
+      a.loop = true; a.volume = 0.01;
       a.play().catch(function () {});
     } catch (e) { /* rien */ }
+  }
+
+  function softClipCurve(k) {
+    const c = new Float32Array(1024);
+    for (let i = 0; i < 1024; i++) { const x = i / 512 - 1; c[i] = Math.tanh(x * (1 + k * 2)) / Math.tanh(1 + k * 2); }
+    return c;
+  }
+  function driveCurve(amount, bits) {
+    const n = 2048, c = new Float32Array(n), k = amount * 12;
+    const steps = bits ? Math.pow(2, bits - 1) : 0;
+    for (let i = 0; i < n; i++) {
+      let x = i / (n / 2) - 1;
+      if (k > 0) x = Math.tanh(x * (1 + k)) / Math.tanh(1 + k);
+      if (steps) x = Math.round(x * steps) / steps;
+      c[i] = x;
+    }
+    return c;
   }
 
   function makeImpulse(seconds, decay) {
@@ -59,7 +85,7 @@
     for (let c = 0; c < 2; c++) {
       const d = buf.getChannelData(c);
       for (let i = 0; i < len; i++) {
-        d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+        d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay) * 0.6;
       }
     }
     return buf;
@@ -77,264 +103,281 @@
     return s;
   }
 
-  // ---------------------------------------------------------------- helpers synthé
-  function osc(type, freq, t, detune) {
-    const o = ctx.createOscillator();
-    o.type = type; o.frequency.setValueAtTime(freq, t);
-    if (detune) o.detune.setValueAtTime(detune, t);
-    return o;
+  const waves = {};
+  function pulseWave(duty) {
+    if (waves[duty]) return waves[duty];
+    const n = 64, re = new Float32Array(n), im = new Float32Array(n);
+    for (let i = 1; i < n; i++) re[i] = (2 / (i * Math.PI)) * Math.sin(i * Math.PI * duty);
+    waves[duty] = ctx.createPeriodicWave(re, im);
+    return waves[duty];
   }
-  function gain(v) { const g = ctx.createGain(); g.gain.value = v; return g; }
-  function filter(type, f, q) {
-    const b = ctx.createBiquadFilter(); b.type = type; b.frequency.value = f; if (q) b.Q.value = q; return b;
+  function setWave(o, w) {
+    if (w === "pulse25") o.setPeriodicWave(pulseWave(0.25));
+    else if (w === "pulse12") o.setPeriodicWave(pulseWave(0.125));
+    else o.type = w;
   }
-  // amplitude : attaque, puis soit tenue (sus), soit décroissance libre (decay = constante de temps)
-  function ampEnv(g, t, peak, attack, decayTau, sus) {
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.linearRampToValueAtTime(peak, t + attack);
-    if (sus === undefined) {
-      g.gain.setTargetAtTime(0.0001, t + attack, decayTau);
-    } else {
-      g.gain.setTargetAtTime(peak * sus, t + attack, decayTau);
-    }
-  }
-  const clampF = function (f) { return Math.max(30, Math.min(18000, f)); };
 
-  /* Chaque synthé : fn(f, vel, t, dest) -> { stops: [sources], amp: GainNode, rel: secondes } */
-  const SYNTHS = {
-    piano: {
-      name: "Piano", icon: "🎹",
-      fn: function (f, v, t, dest) {
-        const amp = gain(0), lp = filter("lowpass", clampF(f * 10), 0.7);
-        const dec = Math.max(0.35, Math.min(2.4, 1.6 * Math.sqrt(220 / f)));
-        lp.frequency.setValueAtTime(clampF(f * 14 * (0.5 + v)), t);
-        lp.frequency.setTargetAtTime(clampF(f * 3), t, dec * 0.6);
-        const parts = [[ "triangle", 1, 0.9 ], [ "sine", 2, 0.35 ], [ "sine", 3, 0.12 ], [ "sine", 4.01, 0.05 ]];
-        const stops = parts.map(function (p) {
-          const o = osc(p[0], f * p[1], t, (Math.random() - 0.5) * 4);
-          const g = gain(p[2]); o.connect(g); g.connect(lp); return o;
-        });
-        // petit "marteau"
-        const n = noise(), ng = gain(0), hp = filter("bandpass", clampF(f * 4), 1);
-        ng.gain.setValueAtTime(0.18 * v, t); ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.03);
-        n.connect(hp); hp.connect(ng); ng.connect(amp); n.start(t); n.stop(t + 0.06);
-        lp.connect(amp); amp.connect(dest);
-        ampEnv(amp, t, 0.5 * v, 0.004, dec);
-        return { stops: stops, amp: amp, rel: 0.18, life: dec * 7 };
-      },
-    },
-    epiano: {
-      name: "Piano électrique", icon: "🎛️",
-      fn: function (f, v, t, dest) {
-        const amp = gain(0), car = osc("sine", f, t), mod = osc("sine", f, t), mg = gain(0);
-        mg.gain.setValueAtTime(f * (1.2 + v * 2), t);
-        mg.gain.setTargetAtTime(f * 0.25, t, 0.25);
-        mod.connect(mg); mg.connect(car.frequency);
-        const tine = osc("sine", f * 7, t), tg = gain(0);
-        tg.gain.setValueAtTime(0.12 * v, t); tg.gain.setTargetAtTime(0.0001, t, 0.05);
-        tine.connect(tg); tg.connect(amp);
-        car.connect(amp); amp.connect(dest);
-        ampEnv(amp, t, 0.45 * v, 0.003, Math.max(0.6, 2.2 * Math.sqrt(220 / f)));
-        return { stops: [car, mod, tine], amp: amp, rel: 0.25, life: Math.max(0.6, 2.2 * Math.sqrt(220 / f)) * 7 };
-      },
-    },
-    organ: {
-      name: "Orgue", icon: "⛪",
-      fn: function (f, v, t, dest) {
-        const amp = gain(0);
-        const bars = [[0.5, 0.45], [1, 1], [2, 0.6], [3, 0.35], [4, 0.3], [6, 0.15], [8, 0.12]];
-        const stops = bars.map(function (b) {
-          const o = osc("sine", f * b[0], t), g = gain(b[1] * 0.22); o.connect(g); g.connect(amp); return o;
-        });
-        const lfo = osc("sine", 6, t), lg = gain(0.04);
-        const trem = gain(1); lfo.connect(lg); lg.connect(trem.gain);
-        amp.connect(trem); trem.connect(dest); stops.push(lfo);
-        ampEnv(amp, t, 0.5 * (0.6 + v * 0.4), 0.012, 0.05, 1);
-        return { stops: stops, amp: amp, rel: 0.08 };
-      },
-    },
-    strings: {
-      name: "Cordes", icon: "🎻",
-      fn: function (f, v, t, dest) {
-        const amp = gain(0), lp = filter("lowpass", clampF(Math.min(f * 6, 5000)), 0.5);
-        const vib = osc("sine", 5.2, t), vg = gain(6); vib.connect(vg);
-        const stops = [-9, 0, 9].map(function (d) {
-          const o = osc("sawtooth", f, t, d); vg.connect(o.detune); o.connect(lp); return o;
-        });
-        stops.push(vib);
-        lp.connect(amp); amp.connect(dest);
-        ampEnv(amp, t, 0.22 * (0.5 + v * 0.5), 0.18, 0.3, 0.85);
-        return { stops: stops, amp: amp, rel: 0.6 };
-      },
-    },
-    pad: {
-      name: "Nappe (pad)", icon: "🌌",
-      fn: function (f, v, t, dest) {
-        const amp = gain(0), lp = filter("lowpass", 400, 3);
-        lp.frequency.setValueAtTime(300, t);
-        lp.frequency.linearRampToValueAtTime(clampF(Math.min(f * 5, 3500)), t + 1.2);
-        const stops = [-14, 0, 14].map(function (d) { const o = osc("sawtooth", f, t, d); o.connect(lp); return o; });
-        const sub = osc("sine", f / 2, t), sg = gain(0.5); sub.connect(sg); sg.connect(amp); stops.push(sub);
-        lp.connect(amp); amp.connect(dest);
-        ampEnv(amp, t, 0.18 * (0.5 + v * 0.5), 0.5, 0.4, 0.9);
-        return { stops: stops, amp: amp, rel: 1.4 };
-      },
-    },
-    supersaw: {
-      name: "Supersaw (EDM)", icon: "⚡",
-      fn: function (f, v, t, dest) {
-        const amp = gain(0), lp = filter("lowpass", clampF(Math.min(f * 10, 9000)), 1);
-        const stops = [-28, -14, -5, 0, 5, 14, 28].map(function (d) {
-          const o = osc("sawtooth", f, t, d), g = gain(0.16); o.connect(g); g.connect(lp); return o;
-        });
-        lp.connect(amp); amp.connect(dest);
-        ampEnv(amp, t, 0.3 * (0.5 + v * 0.5), 0.01, 0.4, 0.8);
-        return { stops: stops, amp: amp, rel: 0.35 };
-      },
-    },
-    lead: {
-      name: "Lead synthé", icon: "🎸",
-      fn: function (f, v, t, dest) {
-        const amp = gain(0), lp = filter("lowpass", clampF(f * 6), 6);
-        lp.frequency.setValueAtTime(clampF(f * 12), t);
-        lp.frequency.setTargetAtTime(clampF(f * 4), t, 0.15);
-        const a = osc("square", f, t), b = osc("sawtooth", f, t, 7), gb = gain(0.6);
-        a.connect(lp); b.connect(gb); gb.connect(lp); lp.connect(amp); amp.connect(dest);
-        ampEnv(amp, t, 0.2 * (0.5 + v * 0.5), 0.005, 0.2, 0.75);
-        return { stops: [a, b], amp: amp, rel: 0.15 };
-      },
-    },
-    chip: {
-      name: "8-bit rétro", icon: "👾",
-      fn: function (f, v, t, dest) {
-        const amp = gain(0), a = osc("square", f, t);
-        a.connect(amp); amp.connect(dest);
-        ampEnv(amp, t, 0.14 * (0.6 + v * 0.4), 0.002, 0.3, 0.7);
-        return { stops: [a], amp: amp, rel: 0.04 };
-      },
-    },
-    bells: {
-      name: "Cloches", icon: "🔔",
-      fn: function (f, v, t, dest) {
-        const amp = gain(0), car = osc("sine", f, t), mod = osc("sine", f * 3.5, t), mg = gain(0);
-        mg.gain.setValueAtTime(f * 3 * (0.5 + v), t); mg.gain.setTargetAtTime(f * 0.3, t, 0.6);
-        mod.connect(mg); mg.connect(car.frequency); car.connect(amp); amp.connect(dest);
-        ampEnv(amp, t, 0.35 * v, 0.002, 1.4);
-        return { stops: [car, mod], amp: amp, rel: 0.8, life: (1.4) * 7 };
-      },
-    },
-    musicbox: {
-      name: "Boîte à musique", icon: "🎁",
-      fn: function (f, v, t, dest) {
-        const amp = gain(0), a = osc("sine", f * 2, t), b = osc("sine", f * 8.2, t), gb = gain(0);
-        gb.gain.setValueAtTime(0.25, t); gb.gain.setTargetAtTime(0.0001, t, 0.04);
-        a.connect(amp); b.connect(gb); gb.connect(amp); amp.connect(dest);
-        ampEnv(amp, t, 0.4 * v, 0.002, 0.55);
-        return { stops: [a, b], amp: amp, rel: 0.3, life: (0.55) * 7 };
-      },
-    },
-    marimba: {
-      name: "Marimba", icon: "🪵",
-      fn: function (f, v, t, dest) {
-        const amp = gain(0), a = osc("sine", f, t), b = osc("sine", f * 4, t), gb = gain(0);
-        gb.gain.setValueAtTime(0.35, t); gb.gain.setTargetAtTime(0.0001, t, 0.03);
-        a.connect(amp); b.connect(gb); gb.connect(amp); amp.connect(dest);
-        ampEnv(amp, t, 0.55 * v, 0.002, 0.28);
-        return { stops: [a, b], amp: amp, rel: 0.12, life: (0.28) * 7 };
-      },
-    },
-    pluck: {
-      name: "Guitare (pincée)", icon: "🪕",
-      fn: function (f, v, t, dest) {
-        const amp = gain(0), lp = filter("lowpass", clampF(f * 12), 2);
-        lp.frequency.setValueAtTime(clampF(f * 14 * (0.4 + v)), t);
-        lp.frequency.setTargetAtTime(clampF(f * 1.6), t, 0.12);
-        const a = osc("sawtooth", f, t), b = osc("square", f, t, 5), gb = gain(0.4);
-        a.connect(lp); b.connect(gb); gb.connect(lp); lp.connect(amp); amp.connect(dest);
-        ampEnv(amp, t, 0.38 * v, 0.002, 0.7);
-        return { stops: [a, b], amp: amp, rel: 0.2, life: (0.7) * 7 };
-      },
-    },
-    harpsichord: {
-      name: "Clavecin", icon: "🏰",
-      fn: function (f, v, t, dest) {
-        const amp = gain(0), hp = filter("highpass", 180, 0.7);
-        const a = osc("sawtooth", f, t), b = osc("square", f * 2, t), gb = gain(0.25);
-        a.connect(hp); b.connect(gb); gb.connect(hp); hp.connect(amp); amp.connect(dest);
-        ampEnv(amp, t, 0.22 * (0.6 + v * 0.4), 0.002, 0.6);
-        return { stops: [a, b], amp: amp, rel: 0.12, life: (0.6) * 7 };
-      },
-    },
-    brass: {
-      name: "Cuivres", icon: "🎺",
-      fn: function (f, v, t, dest) {
-        const amp = gain(0), lp = filter("lowpass", clampF(f), 2);
-        lp.frequency.setValueAtTime(clampF(f), t);
-        lp.frequency.linearRampToValueAtTime(clampF(f * 7 * (0.5 + v)), t + 0.06);
-        lp.frequency.setTargetAtTime(clampF(f * 3.5), t + 0.06, 0.2);
-        const stops = [-6, 6].map(function (d) { const o = osc("sawtooth", f, t, d); o.connect(lp); return o; });
-        lp.connect(amp); amp.connect(dest);
-        ampEnv(amp, t, 0.26 * (0.5 + v * 0.5), 0.035, 0.2, 0.8);
-        return { stops: stops, amp: amp, rel: 0.12 };
-      },
-    },
-    flute: {
-      name: "Flûte", icon: "🪈",
-      fn: function (f, v, t, dest) {
-        const amp = gain(0), a = osc("sine", f, t), b = osc("triangle", f * 2, t), gb = gain(0.08);
-        const vib = osc("sine", 5, t), vg = gain(f * 0.006); vib.connect(vg); vg.connect(a.frequency);
-        const n = noise(), bp = filter("bandpass", clampF(f * 2), 2), ng = gain(0.05);
-        n.connect(bp); bp.connect(ng); ng.connect(amp);
-        a.connect(amp); b.connect(gb); gb.connect(amp); amp.connect(dest);
-        ampEnv(amp, t, 0.38 * (0.5 + v * 0.5), 0.06, 0.2, 0.85);
-        return { stops: [a, b, vib, n], amp: amp, rel: 0.12 };
-      },
-    },
-    choir: {
-      name: "Chœur", icon: "🎤",
-      fn: function (f, v, t, dest) {
-        const amp = gain(0), mix = gain(1);
-        const vib = osc("sine", 5.5, t), vg = gain(8); vib.connect(vg);
-        const stops = [-10, 0, 10].map(function (d) {
-          const o = osc("sawtooth", f, t, d); vg.connect(o.detune); o.connect(mix); return o;
-        });
-        stops.push(vib);
-        [[800, 1, 8], [1150, 0.5, 9], [2900, 0.25, 10]].forEach(function (fm) {
-          const bp = filter("bandpass", fm[0], fm[2]), g = gain(fm[1]); mix.connect(bp); bp.connect(g); g.connect(amp);
-        });
-        amp.connect(dest);
-        ampEnv(amp, t, 0.9 * (0.5 + v * 0.5), 0.25, 0.3, 0.9);
-        return { stops: stops, amp: amp, rel: 0.7 };
-      },
-    },
-    bass808: {
-      name: "Basse 808", icon: "🔊", transpose: -12,
-      fn: function (f, v, t, dest) {
-        const amp = gain(0), o = osc("sine", f * 2.5, t), sh = ctx.createWaveShaper();
-        o.frequency.exponentialRampToValueAtTime(f, t + 0.05);
-        const curve = new Float32Array(256);
-        for (let i = 0; i < 256; i++) { const x = i / 128 - 1; curve[i] = Math.tanh(x * 2.5); }
-        sh.curve = curve;
-        o.connect(sh); sh.connect(amp); amp.connect(dest);
-        ampEnv(amp, t, 0.5 * (0.5 + v * 0.5), 0.003, 0.9);
-        return { stops: [o], amp: amp, rel: 0.15, life: (0.9) * 7 };
-      },
-    },
-    steeldrum: {
-      name: "Steel drum", icon: "🥁",
-      fn: function (f, v, t, dest) {
-        const amp = gain(0);
-        const stops = [[1, 1], [2, 0.5], [3.01, 0.25], [4.2, 0.15]].map(function (p) {
-          const o = osc("sine", f * p[0], t), g = gain(p[1] * 0.3); o.connect(g); g.connect(amp); return o;
-        });
-        amp.connect(dest);
-        ampEnv(amp, t, 0.6 * v, 0.003, 0.45);
-        return { stops: stops, amp: amp, rel: 0.2, life: (0.45) * 7 };
-      },
-    },
+  const gain = function (v) { const g = ctx.createGain(); g.gain.value = v; return g; };
+  const biquad = function (type, f, q) {
+    const b = ctx.createBiquadFilter(); b.type = type; b.frequency.value = clampF(f); if (q !== undefined) b.Q.value = q; return b;
   };
 
-  // ---------------------------------------------------------------- banques HD (General MIDI)
+  // ================================================================ chaîne d'effets du preset
+  function buildFx() {
+    if (!ctx || !preset) return;
+    const old = fx;
+    const P = preset;
+    const input = gain(1);
+    let node = input;
+    if ((P.drive || 0) > 0 || P.crush) {
+      const pre = gain(1 + (P.drive || 0) * 1.5);
+      const sh = ctx.createWaveShaper();
+      sh.curve = driveCurve(P.drive || 0, P.crush || 0);
+      sh.oversample = "2x";
+      const post = gain(1 / (1 + (P.drive || 0) * 0.8));
+      node.connect(pre); pre.connect(sh); sh.connect(post); node = post;
+    }
+    const outG = gain(1);
+    node.connect(outG);
+    const extra = [];
+    if ((P.cho || 0) > 0) { // chorus stéréo
+      [-0.7, 0.7].forEach(function (pan, i) {
+        const d = ctx.createDelay(0.05); d.delayTime.value = 0.012 + i * 0.006;
+        const lfo = ctx.createOscillator(); lfo.frequency.value = 0.6 + i * 0.27;
+        const lg = gain(0.0035); lfo.connect(lg); lg.connect(d.delayTime); lfo.start();
+        const wet = gain(P.cho * 0.7);
+        const pn = ctx.createStereoPanner ? ctx.createStereoPanner() : gain(1);
+        if (pn.pan) pn.pan.value = pan;
+        node.connect(d); d.connect(wet); wet.connect(pn); pn.connect(outG);
+        extra.push(lfo);
+      });
+    }
+    if (P.dly && P.dly[2] > 0) { // écho [temps, retour, mélange]
+      const d = ctx.createDelay(2); d.delayTime.value = P.dly[0];
+      const fb = gain(P.dly[1]);
+      const tone = biquad("lowpass", 4500, 0.5);
+      const wet = gain(P.dly[2]);
+      outG.connect(d); d.connect(tone); tone.connect(fb); fb.connect(d); tone.connect(wet);
+      wet.connect(dryBus); wet.connect(revSendFor(P));
+    }
+    outG.connect(dryBus);
+    outG.connect(revSendFor(P));
+    fx = { input: input, extra: extra, out: outG };
+    if (old) {
+      setTimeout(function () {
+        try { old.out.disconnect(); } catch (e) { /* rien */ }
+        old.extra.forEach(function (o) { try { o.stop(); } catch (e) { /* rien */ } });
+      }, 4000);
+    }
+  }
+  function revSendFor(P) {
+    const g = gain(P.rev === undefined ? 0.2 : P.rev);
+    g.connect(revSend);
+    return g;
+  }
+
+  // ================================================================ voix de synthé
+  function synthVoice(P, midi, vel, t, dest) {
+    const f0 = mtof(midi + 12 * (P.oct || 0));
+    const A = P.a || [0.005, 0.5, 0.7, 0.3];
+    let decay = A[1];
+    if (P.kd) decay *= Math.pow(261.6 / f0, P.kd); // décroissance plus courte dans l'aigu
+    const peak = (P.vol === undefined ? 0.5 : P.vol) * (0.3 + 0.7 * vel);
+    const amp = gain(0);
+    const stops = [], oscs = [];
+    let target = amp;
+
+    if (P.f) { // filtre
+      const F = P.f;
+      const filt = biquad(F.t || "lowpass", 1000, F.q === undefined ? 0.7 : F.q);
+      const bright = Math.pow(2, P.bright || 0);
+      const base = clampF((F.c || 2000) * Math.pow(f0 / 261.6, F.kt === undefined ? 0.5 : F.kt) * bright);
+      const envAmt = (F.e || 0) * (0.5 + vel * 0.5);
+      if (F.a) {
+        filt.frequency.setValueAtTime(base, t);
+        filt.frequency.linearRampToValueAtTime(clampF(base * Math.pow(2, envAmt)), t + F.a);
+        filt.frequency.setTargetAtTime(clampF(base * Math.pow(2, envAmt * (F.s || 0))), t + F.a, (F.d || 0.3) / 3);
+      } else if (envAmt) {
+        filt.frequency.setValueAtTime(clampF(base * Math.pow(2, envAmt)), t);
+        filt.frequency.setTargetAtTime(clampF(base * Math.pow(2, envAmt * (F.s || 0))), t, (F.d || 0.3) / 3);
+      } else {
+        filt.frequency.setValueAtTime(base, t);
+      }
+      if (F.lfo) { // [vitesse, octaves] : wobble
+        const l = ctx.createOscillator(); l.frequency.value = F.lfo[0];
+        const lg = gain(base * (Math.pow(2, F.lfo[1]) - 1));
+        l.connect(lg); lg.connect(filt.frequency); stops.push(l);
+      }
+      filt.connect(amp); target = filt;
+    }
+    if (P.fmt) { // formants (voix, talkbox, sax) : [fréquence, gain, Q]
+      const mix = gain(1);
+      P.fmt.forEach(function (fm) {
+        const bp = biquad("bandpass", fm[0], fm[2] || 8), g = gain(fm[1]);
+        mix.connect(bp); bp.connect(g); g.connect(target);
+      });
+      target = mix;
+    }
+
+    (P.o || [{ w: "sawtooth" }]).forEach(function (o) {
+      const u = o.u || 1;
+      for (let k = 0; k < u; k++) {
+        const cg = gain((o.g === undefined ? 1 : o.g) / Math.sqrt(u));
+        if (o.dec) { // composante qui s'éteint vite (marteau, clic, attaque)
+          cg.gain.setValueAtTime(cg.gain.value, t);
+          cg.gain.setTargetAtTime(0.0001, t, o.dec);
+        }
+        if (o.w === "noise") {
+          const n = noise();
+          let nn = n;
+          if (o.bp) { const b = biquad("bandpass", f0 * o.bp, o.q || 1.5); n.connect(b); nn = b; }
+          if (o.hp) { const h = biquad("highpass", o.hp, 0.7); nn.connect(h); nn = h; }
+          nn.connect(cg); cg.connect(target); stops.push(n);
+          continue;
+        }
+        const osc = ctx.createOscillator();
+        setWave(osc, o.w || "sawtooth");
+        const ratio = (o.r || 1) * Math.pow(2, (o.s || 0) / 12);
+        const fr = f0 * ratio;
+        osc.frequency.setValueAtTime(fr, t);
+        const det = (o.d || 0) + (u > 1 ? (o.sp || 18) * (2 * k / (u - 1) - 1) : 0);
+        if (det) osc.detune.setValueAtTime(det, t);
+        if (o.fm) { // [rapport, indice, décroissance, indice final]
+          const mod = ctx.createOscillator();
+          mod.frequency.setValueAtTime(fr * o.fm[0], t);
+          const mg = gain(0);
+          mg.gain.setValueAtTime(fr * o.fm[1] * (0.4 + vel * 0.6), t);
+          if (o.fm[2]) mg.gain.setTargetAtTime(fr * o.fm[1] * (o.fm[3] || 0), t, o.fm[2]);
+          mod.connect(mg); mg.connect(osc.frequency); stops.push(mod);
+        }
+        if (P.pe) { // enveloppe de hauteur [demi-tons, durée]
+          osc.frequency.setValueAtTime(fr * Math.pow(2, P.pe[0] / 12), t);
+          osc.frequency.exponentialRampToValueAtTime(fr, t + P.pe[1]);
+        }
+        osc.connect(cg); cg.connect(target);
+        stops.push(osc); oscs.push({ osc: osc, ratio: ratio });
+      }
+    });
+    if (P.sub) { // sous-oscillateur
+      const s = ctx.createOscillator(); s.type = "sine";
+      s.frequency.setValueAtTime(f0 / 2, t);
+      if (P.pe) { s.frequency.setValueAtTime(f0 / 2 * Math.pow(2, P.pe[0] / 12), t); s.frequency.exponentialRampToValueAtTime(f0 / 2, t + P.pe[1]); }
+      const sg = gain(P.sub); s.connect(sg); sg.connect(amp);
+      stops.push(s); oscs.push({ osc: s, ratio: 0.5 });
+    }
+    if (P.vib) { // vibrato [vitesse, cents, délai]
+      const l = ctx.createOscillator(); l.frequency.value = P.vib[0];
+      const lg = gain(0);
+      lg.gain.setValueAtTime(0, t);
+      lg.gain.linearRampToValueAtTime(P.vib[1], t + (P.vib[2] || 0.01) + 0.01);
+      l.connect(lg);
+      oscs.forEach(function (x) { lg.connect(x.osc.detune); });
+      stops.push(l);
+    }
+    let outNode = amp;
+    if (P.trem) { // trémolo / effet "pompe" [vitesse, profondeur]
+      const tg = gain(1 - P.trem[1] / 2);
+      const l = ctx.createOscillator(); l.frequency.value = P.trem[0];
+      const lg = gain(P.trem[1] / 2); l.connect(lg); lg.connect(tg.gain);
+      amp.connect(tg); outNode = tg; stops.push(l);
+    }
+
+    amp.gain.setValueAtTime(0.0001, t);
+    amp.gain.linearRampToValueAtTime(peak, t + Math.max(0.001, A[0]));
+    let life = 60;
+    if (A[2] > 0) amp.gain.setTargetAtTime(peak * A[2], t + A[0], Math.max(0.01, decay) / 3);
+    else { amp.gain.setTargetAtTime(0.0001, t + A[0], Math.max(0.01, decay) / 3); life = A[0] + decay * 2.6 + 0.1; }
+    outNode.connect(dest);
+    return { stops: stops, amp: amp, rel: A[3], life: life, oscs: oscs };
+  }
+
+  // ================================================================ batterie
+  function drumHit(type, p, t, vel, dest) {
+    p = p || {};
+    const out = gain((p.v === undefined ? 1 : p.v) * (0.4 + 0.6 * vel));
+    out.connect(dest);
+    const pitch = p.pitch || 1;
+    const run = function (src, until) { src.start(t); src.stop(until); };
+    if (type === "kick" || type === "kick808" || type === "boom" || type === "logdrum") {
+      const long = type === "kick808" || type === "boom";
+      const o = ctx.createOscillator(); o.type = "sine";
+      const f1 = (p.f1 || (type === "logdrum" ? 260 : 170)) * pitch;
+      const fEnd = (p.f0 || (long ? 42 : type === "logdrum" ? 110 : 48)) * pitch;
+      o.frequency.setValueAtTime(f1, t);
+      o.frequency.exponentialRampToValueAtTime(fEnd, t + (p.pt || (type === "logdrum" ? 0.03 : 0.07)));
+      const a = gain(0), d = p.d || (long ? 1.4 : type === "logdrum" ? 0.45 : 0.42);
+      a.gain.setValueAtTime(1, t);
+      a.gain.setTargetAtTime(0.0001, t + 0.01, d / 3);
+      let n = a;
+      if (p.drive || long) {
+        const sh = ctx.createWaveShaper(); sh.curve = driveCurve(p.drive || 0.35, 0);
+        a.connect(sh); n = sh;
+      }
+      if (type === "logdrum") { const lp = biquad("lowpass", 900, 2); n.connect(lp); n = lp; }
+      o.connect(a); n.connect(out); run(o, t + d * 3);
+      if (p.click !== 0 && type !== "boom") {
+        const c = noise(), cg = gain(0), hp = biquad("highpass", 2500, 0.7);
+        cg.gain.setValueAtTime(p.click || 0.25, t); cg.gain.exponentialRampToValueAtTime(0.001, t + 0.012);
+        c.connect(hp); hp.connect(cg); cg.connect(out); run(c, t + 0.02);
+      }
+    } else if (type === "snare" || type === "clap") {
+      const n = noise();
+      const isClap = type === "clap";
+      const f = biquad(isClap ? "bandpass" : "highpass", (isClap ? (p.bp || 1300) : (p.hp || 1500)) * pitch, isClap ? 1.2 : 0.7);
+      const a = gain(0), d = p.d || (isClap ? 0.2 : 0.17);
+      if (isClap) {
+        [0, 0.011, 0.023].forEach(function (x) { a.gain.setValueAtTime(0.9, t + x); a.gain.exponentialRampToValueAtTime(0.12, t + x + 0.01); });
+        a.gain.setValueAtTime(0.75, t + 0.034); a.gain.setTargetAtTime(0.0001, t + 0.034, d / 3);
+      } else {
+        a.gain.setValueAtTime(p.noise || 0.75, t); a.gain.setTargetAtTime(0.0001, t, d / 3);
+        const o = ctx.createOscillator(); o.type = "triangle";
+        o.frequency.setValueAtTime((p.tone || 200) * 1.6 * pitch, t);
+        o.frequency.exponentialRampToValueAtTime((p.tone || 200) * pitch, t + 0.03);
+        const oa = gain(0); oa.gain.setValueAtTime(p.body === undefined ? 0.7 : p.body, t); oa.gain.setTargetAtTime(0.0001, t, 0.035);
+        o.connect(oa); oa.connect(out); run(o, t + 0.2);
+      }
+      n.connect(f); f.connect(a); a.connect(out); run(n, t + d * 3 + 0.05);
+    } else if (type === "hat" || type === "ohat" || type === "crash" || type === "shaker") {
+      const n = noise();
+      const d = p.d || ({ hat: 0.04, ohat: 0.32, crash: 1.4, shaker: 0.07 })[type];
+      const f = biquad("highpass", (p.hp || (type === "crash" ? 5000 : type === "shaker" ? 5500 : 7800)) * pitch, 0.8);
+      const a = gain(0);
+      if (type === "shaker") { a.gain.setValueAtTime(0.0001, t); a.gain.linearRampToValueAtTime(0.35, t + 0.02); a.gain.setTargetAtTime(0.0001, t + 0.02, d / 3); }
+      else { a.gain.setValueAtTime(type === "crash" ? 0.45 : 0.4, t); a.gain.setTargetAtTime(0.0001, t, d / 3); }
+      if (type !== "shaker") { // métal : carrés désaccordés
+        const ring = gain(0.1);
+        [3.1, 4.7].forEach(function (r) {
+          const o = ctx.createOscillator(); o.type = "square"; o.frequency.value = 1000 * r * pitch;
+          o.connect(ring); run(o, t + d * 3);
+        });
+        ring.connect(f);
+      }
+      n.connect(f); f.connect(a); a.connect(out); run(n, t + d * 3 + 0.05);
+    } else if (type === "rim" || type === "cowbell" || type === "perc") {
+      const fr = (p.f || (type === "rim" ? 1700 : type === "cowbell" ? 560 : 900)) * pitch;
+      const a = gain(0), d = p.d || (type === "rim" ? 0.035 : type === "cowbell" ? 0.25 : 0.12);
+      const bp = biquad("bandpass", fr * (type === "cowbell" ? 1.4 : 1), type === "cowbell" ? 2.5 : 4);
+      (type === "cowbell" ? [1, 1.4815] : [1]).forEach(function (r) {
+        const o = ctx.createOscillator(); o.type = type === "perc" ? "sine" : "square"; o.frequency.value = fr * r;
+        o.connect(bp); run(o, t + d * 3 + 0.02);
+      });
+      a.gain.setValueAtTime(type === "perc" ? 0.8 : 0.5, t); a.gain.setTargetAtTime(0.0001, t, d / 3);
+      bp.connect(a); a.connect(out);
+    } else if (type === "tom" || type === "conga") {
+      const o = ctx.createOscillator(); o.type = "sine";
+      const fr = (p.f || (type === "conga" ? 220 : 120)) * pitch;
+      o.frequency.setValueAtTime(fr * 1.6, t); o.frequency.exponentialRampToValueAtTime(fr, t + 0.05);
+      const a = gain(0), d = p.d || (type === "conga" ? 0.18 : 0.35);
+      a.gain.setValueAtTime(0.9, t); a.gain.setTargetAtTime(0.0001, t, d / 3);
+      o.connect(a); a.connect(out); run(o, t + d * 3);
+    } else if (type === "snap") {
+      const n = noise(), bp = biquad("bandpass", 2600 * pitch, 3), a = gain(0);
+      a.gain.setValueAtTime(1, t); a.gain.setTargetAtTime(0.0001, t, 0.02);
+      n.connect(bp); bp.connect(a); a.connect(out); run(n, t + 0.12);
+    }
+  }
+
+  // ================================================================ banques GM (vrais instruments)
   const GM_NAMES = [
     "acoustic_grand_piano", "bright_acoustic_piano", "electric_grand_piano", "honkytonk_piano", "electric_piano_1",
     "electric_piano_2", "harpsichord", "clavinet", "celesta", "glockenspiel", "music_box", "vibraphone", "marimba",
@@ -382,14 +425,9 @@
     "Pianos", "Percussions chromatiques", "Orgues", "Guitares", "Basses", "Cordes", "Ensembles", "Cuivres",
     "Anches", "Flûtes", "Leads synthé", "Pads synthé", "Effets synthé", "Ethnique", "Percussions", "Effets sonores",
   ];
-  const BANKS = {
-    FluidR3_GM: "Fluid (HD)",
-    MusyngKite: "Musyng (HD+)",
-    FatBoy: "FatBoy",
-  };
+  const BANKS = { FluidR3_GM: "Fluid", MusyngKite: "Musyng", FatBoy: "FatBoy" };
   const SF_BASE = "https://cdn.jsdelivr.net/gh/gleitz/midi-js-soundfonts@gh-pages/";
   const samplerCache = {};
-
   const NOTE_IDX = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
   function sfNameToMidi(name) {
     const m = /^([A-G])(b|#)?(-?\d)$/.exec(name);
@@ -407,46 +445,6 @@
       if (p && p.then) p.then(res, rej);
     });
   }
-
-  function loadSampler(bank, name, onProgress) {
-    const key = bank + "/" + name;
-    if (samplerCache[key]) return samplerCache[key];
-    ensure();
-    const sampler = { buffers: {}, raw: {}, keys: [], ready: false };
-    const p = loadScriptFont(bank, name)
-      .then(function (font) {
-        Object.keys(font).forEach(function (noteName) {
-          const midi = sfNameToMidi(noteName);
-          const data = String(font[noteName]);
-          const i = data.indexOf("base64,");
-          if (midi !== null && i >= 0) sampler.raw[midi] = data.slice(i + 7);
-        });
-        const keys = Object.keys(sampler.raw).map(Number).sort(function (a, b) { return a - b; });
-        if (!keys.length) throw new Error("Banque vide");
-        sampler.keys = keys;
-        let done = 0;
-        // décode d'abord le registre central (le plus utilisé)
-        const order = keys.slice().sort(function (a, b) { return Math.abs(a - 64) - Math.abs(b - 64); });
-        return Promise.all(order.map(function (k) {
-          return decode(b64ToBuf(sampler.raw[k])).then(function (buf) {
-            sampler.buffers[k] = buf;
-          }).catch(function () { /* note illisible : ignorée */ }).then(function () {
-            done++;
-            if (onProgress) onProgress(done / keys.length);
-          });
-        }));
-      })
-      .then(function () {
-        sampler.raw = null;
-        sampler.keys = Object.keys(sampler.buffers).map(Number).sort(function (a, b) { return a - b; });
-        sampler.ready = true;
-        return sampler;
-      });
-    p.catch(function () { delete samplerCache[key]; });
-    samplerCache[key] = p;
-    return p;
-  }
-
   // Les banques sont des fichiers JS (format MIDI.js) : on les charge comme <script>
   function loadScriptFont(bank, name) {
     return new Promise(function (res, rej) {
@@ -465,52 +463,75 @@
       document.head.appendChild(el);
     });
   }
-
-  function nearestBuffer(sampler, midi) {
-    if (sampler.buffers[midi]) return { buf: sampler.buffers[midi], rate: 1 };
-    let best = null, bd = 1e9;
-    for (let i = 0; i < sampler.keys.length; i++) {
-      const k = sampler.keys[i], d = Math.abs(k - midi);
-      if (d < bd) { bd = d; best = k; }
-    }
-    if (best === null) return null;
-    return { buf: sampler.buffers[best], rate: Math.pow(2, (midi - best) / 12) };
+  function loadSampler(bank, name, onProgress) {
+    const key = bank + "/" + name;
+    if (samplerCache[key]) return samplerCache[key];
+    ensure();
+    const s = { buffers: {}, keys: [] };
+    const p = loadScriptFont(bank, name).then(function (font) {
+      const raw = {};
+      Object.keys(font).forEach(function (n) {
+        const midi = sfNameToMidi(n), data = String(font[n]), i = data.indexOf("base64,");
+        if (midi !== null && i >= 0) raw[midi] = data.slice(i + 7);
+      });
+      const keys = Object.keys(raw).map(Number);
+      if (!keys.length) throw new Error("Banque vide");
+      let done = 0;
+      keys.sort(function (a, b) { return Math.abs(a - 64) - Math.abs(b - 64); });
+      return Promise.all(keys.map(function (k) {
+        return decode(b64ToBuf(raw[k])).then(function (buf) { s.buffers[k] = buf; })
+          .catch(function () { /* note illisible */ }).then(function () { done++; if (onProgress) onProgress(done / keys.length); });
+      }));
+    }).then(function () {
+      s.keys = Object.keys(s.buffers).map(Number).sort(function (a, b) { return a - b; });
+      return s;
+    });
+    p.catch(function () { delete samplerCache[key]; });
+    samplerCache[key] = p;
+    return p;
   }
-
-  function samplerVoice(sampler, midi, v, t, dest) {
-    const nb = nearestBuffer(sampler, midi);
-    if (!nb) return null;
+  function samplerVoice(smp, midi, vel, t, dest) {
+    let best = null, bd = 1e9;
+    smp.keys.forEach(function (k) { const d = Math.abs(k - midi); if (d < bd) { bd = d; best = k; } });
+    if (best === null) return null;
     const src = ctx.createBufferSource();
-    src.buffer = nb.buf; src.playbackRate.value = nb.rate;
+    src.buffer = smp.buffers[best]; src.playbackRate.value = Math.pow(2, (midi - best) / 12);
     const amp = gain(0);
     amp.gain.setValueAtTime(0.0001, t);
-    amp.gain.linearRampToValueAtTime(0.9 * (0.3 + v * 0.7), t + 0.004);
+    amp.gain.linearRampToValueAtTime(0.9 * (0.3 + vel * 0.7), t + 0.004);
     src.connect(amp); amp.connect(dest);
-    return { stops: [src], amp: amp, rel: 0.25, srcDur: nb.buf.duration / nb.rate };
+    return { stops: [src], amp: amp, rel: 0.25, life: src.buffer.duration / src.playbackRate.value + 0.05, oscs: [] };
   }
 
-  // ---------------------------------------------------------------- voix
+  // ================================================================ gestion des voix
   function startVoice(midi, vel, when) {
     ensure();
+    if (!preset) return null;
+    if (!fx) buildFx();
     const t = Math.max(when || 0, ctx.currentTime);
+    const P = preset;
+    if (P.kit) {
+      const slot = P.kit[((midi % 12) + 12) % 12];
+      if (!slot) return null;
+      const params = Object.assign({}, slot[1] || {});
+      params.pitch = (params.pitch || 1) * Math.pow(2, (Math.floor(midi / 12) - 5) * 0.2);
+      params.v = (params.v === undefined ? 1 : params.v) * (P.vol === undefined ? 1 : P.vol);
+      drumHit(slot[0], params, t, vel, fx.input);
+      return null;
+    }
     let v = null;
-    if (current.kind === "sampler" && current.sampler) {
-      v = samplerVoice(current.sampler, midi, vel, t, out);
+    if (P.gm) {
+      if (!sampler) return null;
+      v = samplerVoice(sampler, midi, vel, t, fx.input);
     } else {
-      const def = current.def || SYNTHS.piano;
-      v = def.fn(mtof(midi + (def.transpose || 0)), vel, t, out);
+      v = synthVoice(P, midi, vel, t, fx.input);
     }
     if (!v) return null;
-    v.stops.forEach(function (s) { s.start(t); });
+    v.stops.forEach(function (s) { s.start(t); try { s.stop(t + v.life); } catch (e) { /* rien */ } });
     v.midi = midi; v.t = t; v.ended = false;
     voices.add(v);
-    const maxEnd = t + (v.srcDur ? v.srcDur + 0.05 : (v.life || 30));
-    v.stops.forEach(function (s) { try { s.stop(maxEnd); } catch (e) { /* rien */ } });
     if (v.stops[0]) v.stops[0].onended = function () { voices.delete(v); try { v.amp.disconnect(); } catch (e) { /* rien */ } };
-    if (voices.size > MAX_VOICES) {
-      const oldest = voices.values().next().value;
-      releaseVoice(oldest, ctx.currentTime, 0.03);
-    }
+    if (voices.size > MAX_VOICES) releaseVoice(voices.values().next().value, ctx.currentTime, 0.03);
     return v;
   }
 
@@ -518,103 +539,101 @@
     if (!v || v.ended) return;
     v.ended = true;
     const t = Math.max(when || 0, ctx.currentTime);
-    let rel = relOverride || v.rel;
-    if (sustain && !relOverride) rel = Math.max(rel, 1.6);
+    let rel = relOverride || v.rel || 0.2;
+    if (sustain && !relOverride) rel = Math.max(rel, 1.8);
     v.amp.gain.cancelScheduledValues(t);
     v.amp.gain.setTargetAtTime(0.0001, t, rel / 4);
-    const end = t + rel * 1.8 + 0.05;
+    const end = t + rel * 1.6 + 0.05;
     v.stops.forEach(function (s) { try { s.stop(end); } catch (e) { /* rien */ } });
   }
 
-  // ---------------------------------------------------------------- boîte à rythmes
-  function drum(type, when, vol) {
-    ensure();
-    const t = Math.max(when || 0, ctx.currentTime);
-    const g = gain(vol === undefined ? 0.8 : vol);
-    g.connect(dryBus);
-    if (type === "kick") {
-      const o = osc("sine", 160, t), a = gain(0);
-      o.frequency.exponentialRampToValueAtTime(42, t + 0.12);
-      a.gain.setValueAtTime(1, t); a.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
-      o.connect(a); a.connect(g); o.start(t); o.stop(t + 0.5);
-    } else if (type === "snare" || type === "clap") {
-      const n = noise(), f = filter(type === "clap" ? "bandpass" : "highpass", type === "clap" ? 1500 : 1200, type === "clap" ? 1.5 : 0.7), a = gain(0);
-      if (type === "clap") {
-        [0, 0.012, 0.024].forEach(function (d) {
-          a.gain.setValueAtTime(0.9, t + d); a.gain.exponentialRampToValueAtTime(0.1, t + d + 0.011);
-        });
-        a.gain.setValueAtTime(0.7, t + 0.036); a.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
-      } else {
-        a.gain.setValueAtTime(0.7, t); a.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
-        const o = osc("triangle", 190, t), oa = gain(0);
-        oa.gain.setValueAtTime(0.6, t); oa.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
-        o.connect(oa); oa.connect(g); o.start(t); o.stop(t + 0.12);
-      }
-      n.connect(f); f.connect(a); a.connect(g); n.start(t); n.stop(t + 0.25);
-    } else if (type === "hat" || type === "ohat") {
-      const n = noise(), f = filter("highpass", 7500, 0.8), a = gain(0), d = type === "ohat" ? 0.28 : 0.045;
-      a.gain.setValueAtTime(0.35, t); a.gain.exponentialRampToValueAtTime(0.001, t + d);
-      n.connect(f); f.connect(a); a.connect(g); n.start(t); n.stop(t + d + 0.02);
-    } else if (type === "rim") {
-      const o = osc("square", 1700, t), a = gain(0), bp = filter("bandpass", 1700, 4);
-      a.gain.setValueAtTime(0.4, t); a.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
-      o.connect(bp); bp.connect(a); a.connect(g); o.start(t); o.stop(t + 0.05);
-    }
+  function glideTo(v, midi) {
+    const now = ctx.currentTime;
+    const f0 = mtof(midi + 12 * (preset.oct || 0));
+    const tau = Math.max(0.004, (preset.glide || 0.03)) / 3;
+    v.oscs.forEach(function (o) {
+      const p = o.osc.frequency;
+      const cur = p.value;
+      p.cancelScheduledValues(now);
+      p.setValueAtTime(cur, now);
+      p.setTargetAtTime(f0 * o.ratio, now, tau);
+    });
+    v.midi = midi;
   }
 
-  // ---------------------------------------------------------------- API publique
-  window.Engine = {
-    SYNTHS: SYNTHS,
-    GM_NAMES: GM_NAMES,
-    GM_FR: GM_FR,
-    GM_FAMILIES: GM_FAMILIES,
-    BANKS: BANKS,
+  // ================================================================ API publique
+  const Engine = {
+    GM_NAMES: GM_NAMES, GM_FR: GM_FR, GM_FAMILIES: GM_FAMILIES, BANKS: BANKS,
     ensure: ensure,
     now: function () { return ctx ? ctx.currentTime : 0; },
     get ctx() { return ctx; },
-    get instrumentId() { return current.id; },
+    get preset() { return preset; },
 
-    /** id : "synth:piano" ou "gm:FluidR3_GM:acoustic_grand_piano" */
-    setInstrument: function (id, onProgress) {
-      const parts = id.split(":");
-      if (parts[0] === "gm") {
-        const bank = parts[1], name = parts[2];
-        return loadSampler(bank, name, onProgress).then(function (s) {
-          current = { id: id, kind: "sampler", sampler: s, def: null };
-          return id;
+    /** Change de preset. Renvoie une promesse (les banques HD se téléchargent). */
+    setPreset: function (P, onProgress) {
+      if (P.gm) {
+        return loadSampler(P.gm[0], P.gm[1], onProgress).then(function (s) {
+          Engine.allOff();
+          sampler = s; preset = P; if (ctx) buildFx(); return P;
         });
       }
-      const def = SYNTHS[parts[1]] || SYNTHS.piano;
-      current = { id: "synth:" + (SYNTHS[parts[1]] ? parts[1] : "piano"), kind: "synth", def: def, sampler: null };
-      return Promise.resolve(current.id);
+      Engine.allOff();
+      sampler = null; preset = P;
+      if (ctx) buildFx();
+      return Promise.resolve(P);
     },
-    isLoaded: function (id) {
-      const p = id.split(":");
-      return p[0] !== "gm" || !!samplerCache[p[1] + "/" + p[2]];
+    /** Met à jour les réglages du preset courant sans couper le son */
+    updatePreset: function (P, fxChanged) {
+      preset = P;
+      if (fxChanged && ctx) buildFx();
     },
-    noteOn: function (midi, vel) { return startVoice(midi, vel === undefined ? 0.8 : vel, 0); },
-    noteOff: function (v) { releaseVoice(v, 0); },
-    /** Joue une note planifiée (lecture auto) */
+    isLoaded: function (P) { return !P.gm || !!samplerCache[P.gm[0] + "/" + P.gm[1]]; },
+
+    noteOn: function (midi, vel) {
+      vel = vel === undefined ? 0.8 : vel;
+      if (preset && preset.mono && !preset.kit && !preset.gm) {
+        ensure();
+        if (mono.voice && !mono.voice.ended && mono.stack.length) {
+          glideTo(mono.voice, midi);
+        } else {
+          mono.voice = startVoice(midi, vel, 0);
+          mono.stack = [];
+        }
+        mono.stack.push(midi);
+        return { monoKey: midi };
+      }
+      return startVoice(midi, vel, 0);
+    },
+    noteOff: function (v) {
+      if (!v) return;
+      if (v.monoKey !== undefined) {
+        const i = mono.stack.lastIndexOf(v.monoKey);
+        if (i >= 0) mono.stack.splice(i, 1);
+        if (!mono.voice) return;
+        if (mono.stack.length) glideTo(mono.voice, mono.stack[mono.stack.length - 1]);
+        else releaseVoice(mono.voice, 0);
+        return;
+      }
+      releaseVoice(v, 0);
+    },
+    /** Note planifiée (leçons, lecture auto) — toujours polyphonique */
     play: function (midi, vel, when, dur) {
       const v = startVoice(midi, vel === undefined ? 0.8 : vel, when);
       if (v) releaseVoice(v, v.t + Math.max(0.05, dur || 0.3));
       return v;
     },
+    cancel: function (v) { if (v && v.amp) releaseVoice(v, 0, 0.01); },
     allOff: function () {
       voices.forEach(function (v) { releaseVoice(v, 0, 0.05); });
+      mono = { voice: null, stack: [] };
     },
-    drum: drum,
+    /** Coup de batterie (boîte à rythmes) */
+    drum: function (type, when, vol, params) {
+      ensure();
+      drumHit(type, Object.assign({ v: vol === undefined ? 0.8 : vol }, params || {}), Math.max(when || 0, ctx.currentTime), 0.9, dryBus);
+    },
     setVolume: function (x) { volume = x; if (master) master.gain.setTargetAtTime(x, ctx.currentTime, 0.02); },
-    setReverb: function (x) { reverbAmount = x; if (wetBus) wetBus.gain.setTargetAtTime(x, ctx.currentTime, 0.02); },
     setSustain: function (b) { sustain = !!b; },
-    instrumentLabel: function (id) {
-      const p = (id || "").split(":");
-      if (p[0] === "gm") {
-        const i = GM_NAMES.indexOf(p[2]);
-        return (i >= 0 ? GM_FR[i] : p[2]) + " · " + (BANKS[p[1]] || p[1]);
-      }
-      const s = SYNTHS[p[1]];
-      return s ? s.name : "Piano";
-    },
   };
+  window.Engine = Engine;
 })();
