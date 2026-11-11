@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#100d16">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Zik">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Zik</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main id="view"></main>
+
+<!-- Lecteur YouTube officiel : toujours visible (petit en bas, grand quand le lecteur est ouvert) -->
+<div id="video-box" data-action="open-player"><div id="yt-player"></div></div>
+
+<div id="mini" data-action="open-player">
+  <div class="mini-video-slot"></div>
+  <div class="mini-info">
+    <div id="mini-title" class="ellipsis"></div>
+    <div id="mini-artist" class="ellipsis muted"></div>
+  </div>
+  <button class="icon-btn" data-action="like-current" id="mini-like" aria-label="J'aime"></button>
+  <button class="icon-btn" data-action="toggle-play" id="mini-play" aria-label="Lecture"></button>
+  <button class="icon-btn" data-action="next" id="mini-next" aria-label="Suivant"></button>
+  <div class="mini-progress"><div id="mini-bar"></div></div>
+</div>
+
+<nav id="tabs">
+  <button data-action="tab" data-tab="library" class="tab"><span class="ti" data-icon="library"></span>Bibliothèque</button>
+  <button data-action="tab" data-tab="search" class="tab"><span class="ti" data-icon="search"></span>Rechercher</button>
+  <button data-action="tab" data-tab="settings" class="tab"><span class="ti" data-icon="settings"></span>Réglages</button>
+</nav>
+
+<section id="player" aria-hidden="true">
+  <header class="player-head">
+    <button class="icon-btn" data-action="close-player" aria-label="Fermer" data-icon="down"></button>
+    <div class="player-src">
+      <div class="muted small">EN COURS</div>
+      <div id="player-src" class="ellipsis"></div>
+    </div>
+    <button class="icon-btn" data-action="show-queue" aria-label="File d'attente" data-icon="queue"></button>
+  </header>
+  <div class="player-video-slot"></div>
+  <div class="player-body">
+    <div class="player-info">
+      <div class="player-text">
+        <div id="pl-title" class="ellipsis"></div>
+        <div id="pl-artist" class="ellipsis muted"></div>
+      </div>
+      <button class="icon-btn big" data-action="like-current" id="pl-like" aria-label="J'aime"></button>
+    </div>
+    <div class="seek">
+      <input type="range" id="pl-seek" min="0" max="1000" value="0" step="1" aria-label="Position">
+      <div class="times"><span id="pl-cur">0:00</span><span id="pl-status" class="muted"></span><span id="pl-dur">0:00</span></div>
+    </div>
+    <div class="controls">
+      <button class="icon-btn" data-action="toggle-shuffle" id="pl-shuffle" aria-label="Aléatoire" data-icon="shuffle"></button>
+      <button class="icon-btn big" data-action="prev" aria-label="Précédent" data-icon="prev"></button>
+      <button class="play-btn" data-action="toggle-play" id="pl-play" aria-label="Lecture"></button>
+      <button class="icon-btn big" data-action="next" aria-label="Suivant" data-icon="next"></button>
+      <button class="icon-btn" data-action="toggle-repeat" id="pl-repeat" aria-label="Répéter" data-icon="repeat"></button>
+    </div>
+    <div class="player-extra">
+      <button class="chip" data-action="choose-video-current">Pas la bonne vidéo ?</button>
+      <button class="chip" data-action="add-current">Ajouter à une playlist</button>
+    </div>
+  </div>
+</section>
+
+<div id="sheet-backdrop" data-action="close-sheet"></div>
+<div id="sheet" role="dialog" aria-modal="true">
+  <div class="sheet-grip"></div>
+  <div class="sheet-head"><h2 id="sheet-title"></h2><button class="icon-btn" data-action="close-sheet" aria-label="Fermer" data-icon="close"></button></div>
+  <div id="sheet-body"></div>
+</div>
+
+<div id="banner"></div>
+<div id="toast"></div>
+
+<input type="file" id="file-csv" accept=".csv,.txt,text/csv,text/plain" multiple hidden>
+<input type="file" id="file-json" accept=".json,application/json" hidden>
+<script src="app.js"></script>
+</body>
+</html>

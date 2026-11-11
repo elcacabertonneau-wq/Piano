@@ -67,3 +67,11 @@ manifest.webmanifest  installation sur l'écran d'accueil
 ```
 
 Aucune dépendance, aucune étape de compilation.
+
+---
+
+# Zik 🎧 : ton lecteur de musique perso
+
+Ce dépôt contient aussi **Zik** : tu importes tes playlists Spotify et la musique est lue via le lecteur YouTube officiel.
+Le fichier **`Zik.ipa`** pour iPhone est compilé automatiquement et publié dans les **Releases** du dépôt.
+Le guide d'installation sans App Store est dans [`ios-zik/README.md`](ios-zik/README.md).

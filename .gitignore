@@ -1,2 +1,5 @@
 .DS_Store
 node_modules/
+ios-zik/build/
+ios-zik/Zik.xcodeproj/
+ios-zik/Info.plist

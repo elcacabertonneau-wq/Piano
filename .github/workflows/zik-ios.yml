@@ -1,0 +1,67 @@
+name: Zik iPhone (.ipa)
+
+on:
+  push:
+    paths:
+      - 'zik/**'
+      - 'ios-zik/**'
+      - '.github/workflows/zik-ios.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: zik-ios
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer XcodeGen
+        run: brew install xcodegen
+
+      - name: Générer le projet Xcode
+        working-directory: ios-zik
+        run: xcodegen generate
+
+      - name: Compiler (sans signature)
+        working-directory: ios-zik
+        run: |
+          set -o pipefail
+          xcodebuild -version
+          xcodebuild \
+            -project Zik.xcodeproj -scheme Zik -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build | tail -n 80
+
+      - name: Fabriquer le .ipa
+        run: |
+          APP=ios-zik/build/Build/Products/Release-iphoneos/Zik.app
+          plutil -p "$APP/Info.plist"
+          ls -la "$APP" "$APP/zik"
+          mkdir -p dist/Payload
+          cp -R "$APP" dist/Payload/
+          (cd dist && zip -qry Zik.ipa Payload)
+          ls -la dist/Zik.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Zik-ipa
+          path: dist/Zik.ipa
+
+      - name: Publier le .ipa (Releases → zik-latest)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete zik-latest --yes --cleanup-tag -R "$GITHUB_REPOSITORY" || true
+          gh release create zik-latest dist/Zik.ipa -R "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Zik pour iPhone" \
+            --notes "Fichier Zik.ipa non signé, compilé automatiquement depuis la branche ${GITHUB_REF_NAME} (commit ${GITHUB_SHA::7}). À installer avec Sideloadly, AltStore ou SideStore : voir ios-zik/README.md."
