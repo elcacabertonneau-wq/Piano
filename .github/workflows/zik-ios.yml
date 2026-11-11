@@ -43,7 +43,7 @@ jobs:
 
       - name: Fabriquer le .ipa
         run: |
-          APP=ios-zik/build/Build/Products/Release-iphoneos/Zik.app
+          APP=ios-zik/build/Build/Products/Release-iphoneos/ZikApp.app
           plutil -p "$APP/Info.plist"
           ls -la "$APP" "$APP/zik"
           mkdir -p dist/Payload
